@@ -200,6 +200,7 @@ class RPCModuleNode final : public ModuleNode {
                               const std::string& f_preproc_name) {
     InitRemoteFunc(&remote_get_time_evaluator_, "runtime.RPCTimeEvaluator");
     // Remove session mask because we pass dev by parts.
+    // std::cout << "GetTimeEvaluator1" << std::endl;
     ICHECK_EQ(GetRPCSessionIndex(dev), sess_->table_index())
         << "ValueError: Need to pass the matched remote device to RPCModule.GetTimeEvaluator";
     dev = RemoveRPCSessionMask(dev);

@@ -951,7 +951,7 @@ def _timed_eval_func(
         if error_no == MeasureErrorNo.NO_ERROR:
             print("*", end="", flush=True)
         else:
-            print("*E", end="", flush=True)  # Run error
+            print("*E1", end="", flush=True)  # Run error
     return costs, error_no, error_msg, toc - tic + build_res.time_cost, toc
 
 
@@ -1058,7 +1058,7 @@ def local_run(
                 )
             elif isinstance(res, Exception):
                 if verbose >= 1:
-                    print("*E", end="", flush=True)  # Run error
+                    print("*E2", end="", flush=True)  # Run error
                 res = (
                     (MAX_FLOAT,),
                     MeasureErrorNo.RUNTIME_DEVICE,
@@ -1124,6 +1124,8 @@ def _rpc_run(
 
     if error_no == 0:
         try:
+            context = dev.create_raw_context()
+            dev.set_raw_context(context)
             stream = dev.create_raw_stream()
             dev.set_raw_stream(stream)
             random_fill = remote.get_function("tvm.contrib.random.random_fill")
@@ -1157,12 +1159,16 @@ def _rpc_run(
             remote.remove(os.path.splitext(build_res.filename)[0] + ".so")
             remote.remove("")
             dev.free_raw_stream(stream)
+            dev.free_raw_context(context)
         # pylint: disable=broad-except
         except Exception:
             dev.free_raw_stream(stream)
+            dev.free_raw_context(context)
             costs = (MAX_FLOAT,)
             error_no = MeasureErrorNo.RUNTIME_DEVICE
             error_msg = make_traceback_info()
+        # finally:
+        #     dev.reset_device()
 
     shutil.rmtree(os.path.dirname(build_res.filename))
     toc = time.time()
@@ -1172,7 +1178,7 @@ def _rpc_run(
         if error_no == MeasureErrorNo.NO_ERROR:
             print("*", end="")
         else:
-            print("*E", end="")  # Run error
+            print("*E3", end="")  # Run error
 
     return costs, error_no, error_msg, toc - tic + build_res.time_cost, toc
 

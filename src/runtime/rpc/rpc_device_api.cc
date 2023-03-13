@@ -38,6 +38,11 @@ class RPCDeviceAPI final : public DeviceAPI {
     GetSess(dev)->GetDeviceAPI(remote_dev)->SetDevice(remote_dev);
   }
 
+  void ResetDevice(Device dev) final {
+    auto remote_dev = RemoveRPCSessionMask(dev);
+    GetSess(dev)->GetDeviceAPI(remote_dev)->ResetDevice(remote_dev);
+  }
+
   void GetAttr(Device dev, DeviceAttrKind kind, TVMRetValue* rv) final {
     auto remote_dev = RemoveRPCSessionMask(dev);
     GetSess(dev)->GetDeviceAPI(remote_dev)->GetAttr(remote_dev, kind, rv);
@@ -113,12 +118,26 @@ class RPCDeviceAPI final : public DeviceAPI {
 
   TVMStreamHandle CreateStream(Device dev) {
     auto remote_dev = RemoveRPCSessionMask(dev);
+    // std::cout << "rpc_device_api CreateStream" << std::endl;
     return GetSess(dev)->GetDeviceAPI(remote_dev)->CreateStream(remote_dev);
   }
+
+  TVMStreamHandle CreateContext(Device dev) {
+    auto remote_dev = RemoveRPCSessionMask(dev);
+    // std::cout << "rpc_device_api CreateContext" << std::endl;
+    return GetSess(dev)->GetDeviceAPI(remote_dev)->CreateContext(remote_dev);
+  }
+
 
   void FreeStream(Device dev, TVMStreamHandle stream) {
     auto remote_dev = RemoveRPCSessionMask(dev);
     GetSess(dev)->GetDeviceAPI(remote_dev)->FreeStream(remote_dev, stream);
+  }
+
+  void FreeContext(Device dev, TVMContextHandle context) {
+    auto remote_dev = RemoveRPCSessionMask(dev);
+    // std::cout << "rpc_device_api FreeContext" << std::endl;
+    GetSess(dev)->GetDeviceAPI(remote_dev)->FreeContext(remote_dev, context);
   }
 
   void StreamSync(Device dev, TVMStreamHandle stream) final {
@@ -128,7 +147,14 @@ class RPCDeviceAPI final : public DeviceAPI {
 
   void SetStream(Device dev, TVMStreamHandle stream) {
     auto remote_dev = RemoveRPCSessionMask(dev);
+    // std::cout << "rpc_device_api SetStream" << std::endl;
     GetSess(dev)->GetDeviceAPI(remote_dev)->SetStream(remote_dev, stream);
+  }
+
+  void SetContext(Device dev, TVMContextHandle context) {
+    auto remote_dev = RemoveRPCSessionMask(dev);
+    // std::cout << "rpc_device_api SetContext" << std::endl;
+    GetSess(dev)->GetDeviceAPI(remote_dev)->SetContext(remote_dev, context);
   }
 
  protected:

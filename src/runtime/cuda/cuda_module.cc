@@ -37,6 +37,8 @@
 #include "../pack_args.h"
 #include "../thread_storage_scope.h"
 #include "cuda_common.h"
+#include <fstream>
+#include <iostream>
 
 namespace tvm {
 namespace runtime {
@@ -166,6 +168,11 @@ class CUDAWrappedFunc {
     CUDA_CALL(cudaGetDevice(&device_id));
     ThreadWorkLoad wl = launch_param_config_.Extract(args);
 
+    // std::ofstream fout;
+    // fout.open("/root/project/tvm_profile.log", std::ios_base::app);
+    // fout<<func_name_<<"|"<<wl.grid_dim(0)<<"|"<<wl.grid_dim(1)<<"|"<<wl.grid_dim(2)<<"|"<<wl.block_dim(0)<<"|"<<wl.block_dim(1)<<"|"<<wl.block_dim(2)<<"|"<<wl.dyn_shmem_size<<std::endl;
+    // fout.close();
+
     if (fcache_[device_id] == nullptr) {
       fcache_[device_id] = m_->GetFunc(device_id, func_name_);
       if (wl.dyn_shmem_size >= (48 << 10)) {
@@ -179,7 +186,13 @@ class CUDAWrappedFunc {
         }
       }
     }
+    CUcontext context = static_cast<CUcontext>(CUDAThreadEntry::ThreadLocal()->context);
+    cuCtxSetCurrent(context);
+    CUexecAffinityParam affinity;
+    cuCtxGetExecAffinity(&affinity, CU_EXEC_AFFINITY_TYPE_SM_COUNT);
+    // std::cout << "Context affinity: " << affinity.param.smCount.val << std::endl;
     CUstream strm = static_cast<CUstream>(CUDAThreadEntry::ThreadLocal()->stream);
+    // std::cout << "strm: " << CUDAThreadEntry::ThreadLocal()->stream << std::endl;
     CUresult result = cuLaunchKernel(fcache_[device_id], wl.grid_dim(0), wl.grid_dim(1),
                                      wl.grid_dim(2), wl.block_dim(0), wl.block_dim(1),
                                      wl.block_dim(2), wl.dyn_shmem_size, strm, void_args, nullptr);
@@ -244,6 +257,7 @@ class CUDAPrepGlobalBarrier {
 PackedFunc CUDAModuleNode::GetFunction(const std::string& name,
                                        const ObjectPtr<Object>& sptr_to_self) {
   ICHECK_EQ(sptr_to_self.get(), this);
+  // std::cout << "Name: " << name << std::endl;
   ICHECK_NE(name, symbol::tvm_module_main) << "Device function do not have main";
   if (name == symbol::tvm_prepare_global_barrier) {
     return PackedFunc(CUDAPrepGlobalBarrier(this, sptr_to_self));

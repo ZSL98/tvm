@@ -31,13 +31,16 @@
 #include <cstring>
 
 #include "cuda_common.h"
+#include <iostream>
 
 namespace tvm {
 namespace runtime {
 
 class CUDADeviceAPI final : public DeviceAPI {
  public:
-  void SetDevice(Device dev) final { CUDA_CALL(cudaSetDevice(dev.device_id)); }
+  void SetDevice(Device dev) final {
+    CUDA_CALL(cudaSetDevice(dev.device_id));
+     }
   void GetAttr(Device dev, DeviceAttrKind kind, TVMRetValue* rv) final {
     int value = 0;
     switch (kind) {
@@ -118,6 +121,7 @@ class CUDADeviceAPI final : public DeviceAPI {
       CUDA_CALL(cudaSetDevice(dev.device_id));
       size_t free_mem, total_mem;
       CUDA_CALL(cudaMemGetInfo(&free_mem, &total_mem));
+      // std::cout << "Allocate: " << nbytes << std::endl;
       VLOG(1) << "allocating " << nbytes << " bytes on device, with " << free_mem
               << " bytes currently free out of " << total_mem << " bytes available";
       CUDA_CALL(cudaMalloc(&ret, nbytes));
@@ -177,17 +181,43 @@ class CUDADeviceAPI final : public DeviceAPI {
   }
 
  public:
+  void ResetDevice(Device dev) {
+    CUDA_CALL(cudaSetDevice(dev.device_id));
+    CUDA_CALL(cudaDeviceReset());
+    std::cout << "Device Reset!" << std::endl;
+  }
+
   TVMStreamHandle CreateStream(Device dev) {
     CUDA_CALL(cudaSetDevice(dev.device_id));
     cudaStream_t retval;
     CUDA_CALL(cudaStreamCreate(&retval));
+    // std::cout << "cuda_device_api createstream" << std::endl;
     return static_cast<TVMStreamHandle>(retval);
+  }
+
+  TVMContextHandle CreateContext(Device dev) {
+    CUDA_CALL(cudaSetDevice(dev.device_id));
+    CUcontext context;
+    CUexecAffinityParam affinity;
+    affinity.type = CU_EXEC_AFFINITY_TYPE_SM_COUNT;
+    affinity.param.smCount.val = 8;
+    CUDA_DRIVER_CALL(cuCtxCreate_v3(&context, &affinity, 1, 0, dev.device_id));
+    std::cout << "cuda_device_api CreateContext" << std::endl;
+    return static_cast<TVMContextHandle>(context);
   }
 
   void FreeStream(Device dev, TVMStreamHandle stream) {
     CUDA_CALL(cudaSetDevice(dev.device_id));
     cudaStream_t cu_stream = static_cast<cudaStream_t>(stream);
     CUDA_CALL(cudaStreamDestroy(cu_stream));
+    // std::cout << "Stream destroyed" << std::endl;
+  }
+
+  void FreeContext(Device dev, TVMContextHandle context) {
+    CUDA_CALL(cudaSetDevice(dev.device_id));
+    CUcontext cu_context = static_cast<CUcontext>(context);
+    CUDA_DRIVER_CALL(cuCtxDestroy(cu_context));
+    // std::cout << "cuda_device_api DestroyContext\n" << std::endl;
   }
 
   void SyncStreamFromTo(Device dev, TVMStreamHandle event_src, TVMStreamHandle event_dst) {
@@ -207,7 +237,17 @@ class CUDADeviceAPI final : public DeviceAPI {
   }
 
   void SetStream(Device dev, TVMStreamHandle stream) final {
+    // std::cout << "cuda_device_api setstream" << std::endl;
     CUDAThreadEntry::ThreadLocal()->stream = static_cast<cudaStream_t>(stream);
+    // std::cout << "streamid setstream: " << CUDAThreadEntry::ThreadLocal()->stream << std::endl;
+  }
+
+  void SetContext(Device dev, TVMContextHandle context) final {
+    CUDA_DRIVER_CALL(cuCtxSetCurrent(static_cast<CUcontext>(context)));
+    CUexecAffinityParam affinity;
+    CUDA_DRIVER_CALL(cuCtxGetExecAffinity(&affinity, CU_EXEC_AFFINITY_TYPE_SM_COUNT));
+    std::cout << "cuda_device_api SetContext: " << affinity.param.smCount.val << std::endl;
+    CUDAThreadEntry::ThreadLocal()->context = static_cast<CUcontext>(context);
   }
 
   void* AllocWorkspace(Device dev, size_t size, DLDataType type_hint) final {
@@ -257,20 +297,43 @@ class CUDATimerNode : public TimerNode {
   virtual void Start() {
     // This initial cudaEventRecord is sometimes pretty slow (~100us). Does
     // cudaEventRecord do some stream synchronization?
+    CUDA_CALL(cudaSetDevice(0));
+    CUcontext context = static_cast<CUcontext>(CUDAThreadEntry::ThreadLocal()->context);
+    cuCtxSetCurrent(context);
+    CUexecAffinityParam affinity;
+    cuCtxGetExecAffinity(&affinity, CU_EXEC_AFFINITY_TYPE_SM_COUNT);
+    // std::cout << "This timer's context affinity when timer starts: " << affinity.param.smCount.val << std::endl;
+    CUDA_CALL(cudaStreamSynchronize(CUDAThreadEntry::ThreadLocal()->stream));
+    // std::cout << "streamid: " << CUDAThreadEntry::ThreadLocal()->stream << std::endl;
     CUDA_CALL(cudaEventRecord(start_, CUDAThreadEntry::ThreadLocal()->stream));
   }
-  virtual void Stop() { CUDA_CALL(cudaEventRecord(stop_, CUDAThreadEntry::ThreadLocal()->stream)); }
+  virtual void Stop() { 
+    CUDA_CALL(cudaSetDevice(0));
+    CUcontext context = static_cast<CUcontext>(CUDAThreadEntry::ThreadLocal()->context);
+    cuCtxSetCurrent(context);
+    CUDA_CALL(cudaEventRecord(stop_, CUDAThreadEntry::ThreadLocal()->stream));
+  }
   virtual int64_t SyncAndGetElapsedNanos() {
+    CUcontext context = static_cast<CUcontext>(CUDAThreadEntry::ThreadLocal()->context);
+    cuCtxSetCurrent(context);
     CUDA_CALL(cudaEventSynchronize(stop_));
     float milliseconds = 0;
     CUDA_CALL(cudaEventElapsedTime(&milliseconds, start_, stop_));
     return milliseconds * 1e6;
   }
   virtual ~CUDATimerNode() {
+    CUcontext context = static_cast<CUcontext>(CUDAThreadEntry::ThreadLocal()->context);
+    cuCtxSetCurrent(context);
+    CUDA_CALL(cudaSetDevice(0));
     CUDA_CALL(cudaEventDestroy(start_));
     CUDA_CALL(cudaEventDestroy(stop_));
   }
   CUDATimerNode() {
+    CUcontext context = static_cast<CUcontext>(CUDAThreadEntry::ThreadLocal()->context);
+    cuCtxSetCurrent(context);
+    CUexecAffinityParam affinity;
+    cuCtxGetExecAffinity(&affinity, CU_EXEC_AFFINITY_TYPE_SM_COUNT);
+    CUDA_CALL(cudaSetDevice(0));
     CUDA_CALL(cudaEventCreate(&start_));
     CUDA_CALL(cudaEventCreate(&stop_));
   }

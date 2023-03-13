@@ -266,6 +266,7 @@ class HostDeviceSplitter : public StmtMutator {
   Stmt SplitDeviceFunc(Stmt body) {
     std::ostringstream os;
     os << name_prefix_ << "_kernel" << device_func_counter_++;
+    // std::cout << name_prefix_ << "_kernel" << device_func_counter_ << std::endl;
     std::string kernel_symbol = os.str();
     // isolate the device function.
     VarUseDefAnalysis m;
@@ -278,6 +279,7 @@ class HostDeviceSplitter : public StmtMutator {
 
     // Strictly order the arguments: Var pointers, positional arguments.
     for (Var var : m.undefined_) {
+      // std::cout << var.dtype() << std::endl;
       if (var.dtype().is_handle()) {
         // Create a new version of v.
         auto it = handle_data_type_.find(var.get());

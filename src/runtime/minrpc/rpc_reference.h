@@ -49,6 +49,7 @@ enum class RPCCode : int {
   kGetGlobalFunc = kSyscallCodeStart,
   kFreeHandle,
   kDevSetDevice,
+  kDevResetDevice,
   kDevGetAttr,
   kDevAllocData,
   kDevFreeData,
@@ -57,7 +58,10 @@ enum class RPCCode : int {
   kDevAllocDataWithScope,
   kDevCreateStream,
   kDevFreeStream,
+  kDevFreeContext,
   kDevSetStream,
+  kDevCreateContext,
+  kDevSetContext,
 };
 
 /*!
@@ -104,6 +108,8 @@ inline const char* RPCCodeToString(RPCCode code) {
       return "kFreeHandle";
     case RPCCode::kDevSetDevice:
       return "kDevSetDevice";
+    case RPCCode::kDevResetDevice:
+      return "kDevResetDevice";
     case RPCCode::kDevGetAttr:
       return "kDevGetAttr";
     case RPCCode::kDevAllocData:
@@ -112,12 +118,18 @@ inline const char* RPCCodeToString(RPCCode code) {
       return "kDevFreeData";
     case RPCCode::kDevCreateStream:
       return "kDevCreateStream";
+    case RPCCode::kDevCreateContext:
+      return "kDevCreateContext";
     case RPCCode::kDevFreeStream:
       return "kDevFreeStream";
+    case RPCCode::kDevFreeContext:
+      return "kDevFreeContext";
     case RPCCode::kDevStreamSync:
       return "kDevStreamSync";
     case RPCCode::kDevSetStream:
       return "kDevSetStream";
+    case RPCCode::kDevSetContext:
+      return "kDevSetContext";
     case RPCCode::kCopyAmongRemote:
       return "kCopyAmongRemote";
     case RPCCode::kDevAllocDataWithScope:

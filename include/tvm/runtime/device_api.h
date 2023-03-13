@@ -137,7 +137,8 @@ class TVM_DLL DeviceAPI {
    * \param dev The device of allocation.
    */
   virtual TVMStreamHandle CreateStream(Device dev);
-
+  virtual TVMContextHandle CreateContext(Device dev);
+  virtual void ResetDevice(Device dev);
   /*!
    * \brief Free a stream of execution
    *
@@ -145,6 +146,7 @@ class TVM_DLL DeviceAPI {
    * \param stream The pointer to be freed.
    */
   virtual void FreeStream(Device dev, TVMStreamHandle stream);
+  virtual void FreeContext(Device dev, TVMContextHandle context);
 
   /*!
    * \brief Synchronize the stream
@@ -158,6 +160,7 @@ class TVM_DLL DeviceAPI {
    * \param stream The stream to be set.
    */
   virtual void SetStream(Device dev, TVMStreamHandle stream) {}
+  virtual void SetContext(Device dev, TVMContextHandle context) {}
   /*!
    * \brief Synchronize 2 streams of execution.
    *

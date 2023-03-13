@@ -60,6 +60,7 @@ constexpr auto Is2DStorage = IsTextureStorage;
  */
 void GraphExecutor::Run() {
   // setup the array and requirements.
+  // if (op_execs_[64]) op_execs_[64]();
   for (size_t i = 0; i < op_execs_.size(); ++i) {
     if (op_execs_[i]) op_execs_[i]();
   }
@@ -423,6 +424,7 @@ void GraphExecutor::SetupStorage() {
           << " downstream error from memory planner likely";
       pool_entry[sid].dtype = t;
     }
+    // std::cout << "pool_entry.size of " << sid << " is " << pool_entry[sid].shape[0] << std::endl;
   }
 
   // Allocate the space.
@@ -465,6 +467,7 @@ void GraphExecutor::SetupStorage() {
 
 void GraphExecutor::SetupOpExecs() {
   op_execs_.resize(this->GetNumOfNodes());
+  std::cout << "GraphExecutor--GetNumOfNodes: " << this->GetNumOfNodes() << std::endl;
   input_dltensors_.resize(num_node_entries());
   output_dltensors_.resize(num_node_entries());
   both_output_opinput_dltensors_.resize(num_node_entries());
@@ -560,9 +563,12 @@ std::pair<std::function<void()>, std::shared_ptr<GraphExecutor::OpArgs>> GraphEx
   // Get compiled function from the module that contains both host and device
   // code.
   tvm::runtime::PackedFunc pf = module_.GetFunction(param.func_name, true);
+  std::cout << "CreateTVMop: " << param.func_name << std::endl;
+  // std::cout << "arg size: " << arg_ptr->arg_values.size() << std::endl;
   ICHECK(pf != nullptr) << "no such function in module: " << param.func_name;
 
   auto fexec = [arg_ptr, pf]() {
+    std::cout << "Execute from host" << std::endl;
     TVMRetValue rv;
     TVMArgs targs(arg_ptr->arg_values.data(), arg_ptr->arg_tcodes.data(),
                   static_cast<int>(arg_ptr->arg_values.size()));
@@ -628,6 +634,7 @@ PackedFunc GraphExecutor::GetFunction(const std::string& name,
     return PackedFunc(
         [sptr_to_self, this](TVMArgs args, TVMRetValue* rv) { *rv = this->NumInputs(); });
   } else if (name == "run") {
+    // std::cout << "Is it run from here?" << std::endl;
     return PackedFunc([sptr_to_self, this](TVMArgs args, TVMRetValue* rv) { this->Run(); });
   } else if (name == "run_from_inputs") {
     return PackedFunc(

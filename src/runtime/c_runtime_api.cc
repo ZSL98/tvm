@@ -191,8 +191,10 @@ void DeviceAPI::CopyDataFromTo(const void* from, size_t from_offset, void* to, s
 void DeviceAPI::FreeWorkspace(Device dev, void* ptr) { FreeDataSpace(dev, ptr); }
 
 TVMStreamHandle DeviceAPI::CreateStream(Device dev) { return nullptr; }
-
+TVMContextHandle DeviceAPI::CreateContext(Device dev) { return nullptr; }
+void DeviceAPI::ResetDevice(Device dev) {}
 void DeviceAPI::FreeStream(Device dev, TVMStreamHandle stream) {}
+void DeviceAPI::FreeContext(Device dev, TVMContextHandle context) {}
 
 void DeviceAPI::SyncStreamFromTo(Device dev, TVMStreamHandle event_src, TVMStreamHandle event_dst) {
 }
@@ -476,6 +478,7 @@ int TVMFuncCall(TVMFunctionHandle func, TVMValue* args, int* arg_type_codes, int
   (static_cast<const PackedFuncObj*>(func))
       ->CallPacked(TVMArgs(args, arg_type_codes, num_args), &rv);
   // handle return string.
+  // std::cout << num_args << std::endl;
   if (rv.type_code() == kTVMStr || rv.type_code() == kTVMDataType || rv.type_code() == kTVMBytes) {
     TVMRuntimeEntry* e = TVMAPIRuntimeStore::Get();
     if (rv.type_code() != kTVMDataType) {
@@ -548,6 +551,27 @@ int TVMStreamCreate(int device_type, int device_id, TVMStreamHandle* out) {
   dev.device_type = static_cast<DLDeviceType>(device_type);
   dev.device_id = device_id;
   *out = DeviceAPIManager::Get(dev)->CreateStream(dev);
+  // std::cout << "TVMStreamCreate in c_runtime_api.cc" << std::endl;
+  API_END();
+}
+
+int TVMContextCreate(int device_type, int device_id, TVMContextHandle* out) {
+  API_BEGIN();
+  DLDevice dev;
+  dev.device_type = static_cast<DLDeviceType>(device_type);
+  dev.device_id = device_id;
+  // std::cout << "TVMContextCreate in c_runtime_api.cc" << std::endl;
+  *out = DeviceAPIManager::Get(dev)->CreateContext(dev);
+  API_END();
+}
+
+int TVMSetContext(int device_type, int device_id, TVMContextHandle context) {
+  API_BEGIN();
+  DLDevice dev;
+  dev.device_type = static_cast<DLDeviceType>(device_type);
+  dev.device_id = device_id;
+  DeviceAPIManager::Get(dev)->SetContext(dev, context);
+  // std::cout << "TVMSetContext in c_runtime_api.cc" << std::endl;
   API_END();
 }
 
@@ -560,12 +584,40 @@ int TVMStreamFree(int device_type, int device_id, TVMStreamHandle stream) {
   API_END();
 }
 
+int TVMContextFree(int device_type, int device_id, TVMContextHandle context) {
+  API_BEGIN();
+  DLDevice dev;
+  dev.device_type = static_cast<DLDeviceType>(device_type);
+  dev.device_id = device_id;
+  DeviceAPIManager::Get(dev)->FreeContext(dev, context);
+  API_END();
+}
+
 int TVMSetStream(int device_type, int device_id, TVMStreamHandle stream) {
   API_BEGIN();
   DLDevice dev;
   dev.device_type = static_cast<DLDeviceType>(device_type);
   dev.device_id = device_id;
   DeviceAPIManager::Get(dev)->SetStream(dev, stream);
+  // std::cout << "TVMSetStream in c_runtime_api.cc" << std::endl;
+  API_END();
+}
+
+int TVMSetDevice(int device_type, int device_id) {
+  API_BEGIN();
+  DLDevice dev;
+  dev.device_type = static_cast<DLDeviceType>(device_type);
+  dev.device_id = device_id;
+  DeviceAPIManager::Get(dev)->SetDevice(dev);
+  API_END();
+}
+
+int TVMResetDevice(int device_type, int device_id) {
+  API_BEGIN();
+  DLDevice dev;
+  dev.device_type = static_cast<DLDeviceType>(device_type);
+  dev.device_id = device_id;
+  DeviceAPIManager::Get(dev)->ResetDevice(dev);
   API_END();
 }
 
@@ -658,3 +710,4 @@ TVM_REGISTER_GLOBAL("runtime.GetDeviceAttr").set_body([](TVMArgs args, TVMRetVal
 });
 
 TVM_REGISTER_GLOBAL("runtime.TVMSetStream").set_body_typed(TVMSetStream);
+TVM_REGISTER_GLOBAL("runtime.TVMSetContext").set_body_typed(TVMSetContext);
