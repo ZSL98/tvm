@@ -97,6 +97,7 @@ TVM_REGISTER_TARGET_TAG("nvidia/jetson-agx-xavier")
 #define TVM_REGISTER_CUDA_TAG(Name, Arch, SharedMem, RegPerBlock) \
   TVM_REGISTER_TARGET_TAG(Name).set_config({                      \
       {"kind", String("cuda")},                                   \
+      {"keys", Array<String>{"cuda", "gpu"}},                     \
       {"arch", String(Arch)},                                     \
       {"max_shared_memory_per_block", Integer(SharedMem)},        \
       {"max_threads_per_block", Integer(1024)},                   \
@@ -358,9 +359,11 @@ TVM_REGISTER_CUDA_TAG("nvidia/tegra-x1", "sm_53", 49152, 32768);
 
 #undef TVM_REGISTER_CUDA_TAG
 
-#define TVM_REGISTER_TAG_AWS_C5(Name, Cores, Arch) \
-  TVM_REGISTER_TARGET_TAG(Name).set_config(        \
-      {{"kind", String("llvm")}, {"mcpu", String(Arch)}, {"num-cores", Integer(Cores)}});
+#define TVM_REGISTER_TAG_AWS_C5(Name, Cores, Arch)                                 \
+  TVM_REGISTER_TARGET_TAG(Name).set_config({{"kind", String("llvm")},              \
+                                            {"keys", Array<String>{"x86", "cpu"}}, \
+                                            {"mcpu", String(Arch)},                \
+                                            {"num-cores", Integer(Cores)}});
 
 TVM_REGISTER_TAG_AWS_C5("aws/cpu/c5.large", 1, "skylake-avx512");
 TVM_REGISTER_TAG_AWS_C5("aws/cpu/c5.xlarge", 2, "skylake-avx512");
@@ -372,5 +375,20 @@ TVM_REGISTER_TAG_AWS_C5("aws/cpu/c5.18xlarge", 36, "skylake-avx512");
 TVM_REGISTER_TAG_AWS_C5("aws/cpu/c5.24xlarge", 48, "cascadelake");
 
 #undef TVM_REGISTER_TAG_AWS_C5
+
+#define TVM_REGISTER_METAL_GPU_TAG(Name, ThreadsPerBlock, SharedMem, WarpSize)   \
+  TVM_REGISTER_TARGET_TAG(Name).set_config(                                      \
+      {{"kind", String("metal")},                                                \
+       {"max_threads_per_block", Integer(ThreadsPerBlock)},                      \
+       {"max_shared_memory_per_block", Integer(SharedMem)},                      \
+       {"thread_warp_size", Integer(WarpSize)},                                  \
+       {"host", Map<String, ObjectRef>{{"kind", String("llvm")},                 \
+                                       {"mtriple", String("arm64-apple-macos")}, \
+                                       {"mcpu", String("apple-latest")}}}});
+
+TVM_REGISTER_METAL_GPU_TAG("apple/m1-gpu", 1024, 32768, 32);
+TVM_REGISTER_METAL_GPU_TAG("apple/m2-gpu", 1024, 32768, 32);
+
+#undef TVM_REGISTER_METAL_TAG
 
 }  // namespace tvm

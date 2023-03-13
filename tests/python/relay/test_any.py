@@ -446,6 +446,15 @@ def test_any_layout_transform():
     verify_any_layout_transform((16, 1), "CH", "C4cH", (16, 1), (4, 4, 1))
 
 
+def test_bilayout_with_any():
+    bilayout = tvm.tir.bijective_layout("NCHW", "NHWC")
+    assert isinstance(bilayout, tvm.tir.BijectiveLayout)
+    dst_shape = bilayout.forward_shape((relay.Any(), 32, 7, relay.Any()))
+    assert dst_shape[3] == 32
+    src_shape = bilayout.backward_shape(dst_shape)
+    assert src_shape[1] == 32
+
+
 def verify_any_expand_dims(data_shape, axis, num_newaxis, static_data_shape, ref_out_shape):
     mod = tvm.IRModule()
     dtype = "float32"
@@ -492,6 +501,18 @@ def verify_any_squeeze(data_shape, axis, static_data_shape):
     check_result([data_np], mod, ref_out)
 
 
+def verify_any_squeeze_sqrt(data_shape, axis, static_data_shape):
+    mod = tvm.IRModule()
+    dtype = "float32"
+    data = relay.var("data", shape=data_shape, dtype=dtype)
+    y = relay.squeeze(data, axis=axis)
+    y = relay.sqrt(y)
+    mod["main"] = relay.Function([data], y)
+    data_np = np.random.uniform(size=static_data_shape).astype(dtype)
+    ref_out = np.sqrt(np.squeeze(data_np, axis))
+    check_result([data_np], mod, ref_out)
+
+
 @tvm.testing.uses_gpu
 def test_any_squeeze():
     verify_any_squeeze((relay.Any(), relay.Any(), relay.Any()), (0,), (1, 9, 8))
@@ -499,6 +520,8 @@ def test_any_squeeze():
     verify_any_squeeze(
         (1, relay.Any(), relay.Any(), 1, relay.Any(), relay.Any()), (0, 3), (1, 12, 2, 1, 9, 17)
     )
+    verify_any_squeeze_sqrt((1, relay.Any(), 12, 32, 1), (-1,), (1, 100, 12, 32, 1))
+    verify_any_squeeze_sqrt((relay.Any(), relay.Any(), relay.Any(), 1), (-1,), (1, 9, 8, 1))
 
 
 @tvm.testing.uses_gpu

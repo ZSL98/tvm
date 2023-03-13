@@ -214,50 +214,54 @@ inline Tensor pool_grad_impl(const Tensor& out_grad, const Tensor& x,
   }
 }
 
+/*!
+ * \brief Find index of Depth, Height or Width dimension in a layout string.
+ *
+ * \param layout The layout string
+ * \param depth_axis set as the index of depth ('D') if not nullptr.
+ * \param height_axis set as the index of height ('H') if not nullptr.
+ * \param width_axis set as the index of width ('W') if not nullptr.
+ *
+ * \return true if the layout is valid (i.e., no tiling on D, H or W dimensions, no duplicates and
+ * if the requested dimensions are found), otherwise false.
+ */
 inline bool find_depth_height_width(const std::string& layout, int* depth_axis, int* height_axis,
                                     int* width_axis) {
-  *depth_axis = -1;
-  *height_axis = -1;
-  *width_axis = -1;
+  if (depth_axis) *depth_axis = -1;
+  if (height_axis) *height_axis = -1;
+  if (width_axis) *width_axis = -1;
   int curr_idx = 0;
   for (size_t i = 0; i < layout.size(); ++i) {
     if ((layout[i] >= 'A' && layout[i] <= 'Z') || (layout[i] >= 'a' && layout[i] <= 'z')) {
-      if (layout[i] == 'D') {
+      if (layout[i] == 'D' && depth_axis) {
         if (*depth_axis != -1) return false;
         *depth_axis = curr_idx;
-      } else if (layout[i] == 'H') {
+      } else if (layout[i] == 'H' && height_axis) {
         if (*height_axis != -1) return false;
         *height_axis = curr_idx;
-      } else if (layout[i] == 'W') {
+      } else if (layout[i] == 'W' && width_axis) {
         if (*width_axis != -1) return false;
         *width_axis = curr_idx;
       } else if (layout[i] == 'd' || layout[i] == 'h' || layout[i] == 'w') {
-        // do not support split on height or width, e.g., NCHW16w
+        // do not support split on height, width or depth, e.g., NCHW16w
         return false;
       }
       ++curr_idx;
     }
   }
-  if (*depth_axis == -1 || *height_axis == -1 || *width_axis == -1) return false;
+  if ((depth_axis && *depth_axis == -1) || (height_axis && *height_axis == -1) ||
+      (width_axis && *width_axis == -1))
+    return false;
   return true;
 }
 
 inline bool find_height_width(const std::string& layout, int* height_axis, int* width_axis) {
-  int dummy;
-  ICHECK_EQ(find_depth_height_width(layout, &dummy, height_axis, width_axis), false);
-  if (*height_axis != -1 && *width_axis != -1) {
-    return true;
-  }
-  return false;
+  return find_depth_height_width(layout, /*depth_axis=*/nullptr, height_axis, width_axis);
 }
 
 inline bool find_width(const std::string& layout, int* width_axis) {
-  int dummy;
-  ICHECK_EQ(find_depth_height_width(layout, &dummy, &dummy, width_axis), false);
-  if (*width_axis != -1) {
-    return true;
-  }
-  return false;
+  return find_depth_height_width(layout, /*depth_axis=*/nullptr, /*height_axis=*/nullptr,
+                                 width_axis);
 }
 
 /*!
@@ -353,7 +357,9 @@ inline Tensor adaptive_pool_impl(const Tensor& x, const Array<PrimExpr>& output_
     return std::make_tuple(indices, reduce_axes);
   };
 
+  Map<String, ObjectRef> attrs;
   if (pool_type == kMaxPool) {
+    attrs.Set("schedule_rule", tvm::runtime::String("meta_schedule.adaptive_pool_max"));
     return tvm::te::compute(
         out_shape,
         [&](const Array<Var>& output) {
@@ -362,8 +368,9 @@ inline Tensor adaptive_pool_impl(const Tensor& x, const Array<PrimExpr>& output_
           std::tie(indices, reduce_axes) = get_iter_vars(output, true);
           return tvm::max(x(indices), reduce_axes);  // NOLINT(*)
         },
-        "tensor", "adaptive_pool_max");
+        "adaptive_pool_max", "adaptive_pool_max", attrs);
   } else if (pool_type == kAvgPool) {
+    attrs.Set("schedule_rule", tvm::runtime::String("meta_schedule.adaptive_pool_avg"));
     auto pool_sum = tvm::te::compute(
         out_shape,
         [&](const Array<Var>& output) {
@@ -372,7 +379,7 @@ inline Tensor adaptive_pool_impl(const Tensor& x, const Array<PrimExpr>& output_
           std::tie(indices, reduce_axes) = get_iter_vars(output, true);
           return tvm::sum(x(indices), reduce_axes);
         },
-        "tensor", "adaptive_pool_sum");
+        "adaptive_pool_sum", "adaptive_pool_sum");
 
     return tvm::te::compute(
         out_shape,
@@ -388,7 +395,7 @@ inline Tensor adaptive_pool_impl(const Tensor& x, const Array<PrimExpr>& output_
 
           return div(pool_sum(indices), divide_factor);
         },
-        "tensor", kElementWise);
+        "adaptive_pool_avg", kElementWise, attrs);
   } else {
     LOG(ERROR) << "Unrecognized pool_type: " << pool_type;
     return x;
@@ -566,8 +573,10 @@ inline Tensor pool_impl_nd(const Tensor& x, const Array<PrimExpr>& kernel_size,
     out_shape.Set(ii, out_dim);
   }
 
+  Map<String, ObjectRef> attrs;
   if (pool_type == kMaxPool) {
     auto temp = do_pad ? pad(x, pad_before, pad_after, tvm::min_value(x->dtype), "pad_temp") : x;
+    attrs.Set("schedule_rule", tvm::runtime::String("meta_schedule.pool_max"));
     return tvm::te::compute(
         out_shape,
         [&](const Array<Var>& output) {
@@ -580,8 +589,9 @@ inline Tensor pool_impl_nd(const Tensor& x, const Array<PrimExpr>& kernel_size,
           }
           return tvm::max(temp(indices), daxis);
         },
-        "tensor", "pool_max");
+        "pool_max", "pool_max", attrs);
   } else if (pool_type == kAvgPool) {
+    attrs.Set("schedule_rule", tvm::runtime::String("meta_schedule.pool_avg"));
     // Pad the inputs
     auto temp = do_pad ? pad(x, pad_before, pad_after, 0, "pad_temp") : x;
 
@@ -598,7 +608,7 @@ inline Tensor pool_impl_nd(const Tensor& x, const Array<PrimExpr>& kernel_size,
           }
           return tvm::sum(temp(indices), daxis);
         },
-        "tensor", "pool_sum");
+        "pool_sum", "pool_sum");
 
     // TVM compute for dividing the reduced window sum by kernel size.
     return tvm::te::compute(
@@ -650,7 +660,7 @@ inline Tensor pool_impl_nd(const Tensor& x, const Array<PrimExpr>& kernel_size,
             return div(pool_sum(indices), divide_factor);
           }
         },
-        "tensor", kElementWise);
+        "pool_avg", kElementWise, attrs);
   } else {
     LOG(ERROR) << "Unrecognized pool_type: " << pool_type;
     return x;

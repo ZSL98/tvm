@@ -23,6 +23,21 @@ namespace meta_schedule {
 
 String GetRuleKindFromTarget(const Target& target) {
   if (target->kind->name == "llvm") {
+    static const PackedFunc* f_check_vnni =
+        runtime::Registry::Get("tvm.target.x86.target_has_vnni");
+    ICHECK(f_check_vnni != nullptr) << "The `target_has_vnni` func is not in tvm registry.";
+    if (target->GetAttr<String>("mcpu") &&
+        (*f_check_vnni)(target->GetAttr<String>("mcpu").value())) {
+      return "vnni";
+    } else {
+      static const PackedFunc* f_check_avx512 =
+          runtime::Registry::Get("tvm.target.x86.target_has_avx512");
+      ICHECK(f_check_avx512 != nullptr) << "The `target_has_avx512` func is not in tvm registry.";
+      if (target->GetAttr<String>("mcpu") &&
+          (*f_check_avx512)(target->GetAttr<String>("mcpu").value())) {
+        return "avx512";
+      }
+    }
     return "llvm";
   }
   if (target->kind->name == "hexagon") {
@@ -35,7 +50,7 @@ String GetRuleKindFromTarget(const Target& target) {
         sm = sm.substr(3);
         try {
           if (std::stoi(sm) >= 75) {
-            return "cuda_tensorcore";
+            return "cuda-tensorcore";
           }
         } catch (const std::invalid_argument& e) {
           LOG(WARNING) << "ValueError: Unable to parse `target.arch`: " << sm
@@ -45,11 +60,13 @@ String GetRuleKindFromTarget(const Target& target) {
     }
     return "cuda";
   }
-  if (target->kind->name == "rocm") {
+
+  if (IsGPUTarget(target->kind->name)) {
     return "cuda";
   }
-  if (target->kind->name == "vulkan") {
-    return "cuda";
+
+  if (target->kind->name == "c") {
+    return "c";
   }
   LOG(FATAL) << "Unsupported target: " << target;
   throw;
@@ -64,6 +81,7 @@ void SpaceGeneratorNode::InitializeWithTuneContext(const TuneContext& context) {
     Array<ScheduleRule> default_sch_rules;
     Array<Postproc> default_postprocs;
     Map<Mutator, FloatImm> default_mutator_probs;
+    // for target with skylake-avx512
     if (kind == "llvm") {
       default_sch_rules = ScheduleRule::DefaultLLVM();
       default_postprocs = Postproc::DefaultLLVM();
@@ -72,7 +90,7 @@ void SpaceGeneratorNode::InitializeWithTuneContext(const TuneContext& context) {
       default_sch_rules = ScheduleRule::DefaultCUDA();
       default_postprocs = Postproc::DefaultCUDA();
       default_mutator_probs = Mutator::DefaultCUDA();
-    } else if (kind == "cuda_tensorcore") {
+    } else if (kind == "cuda-tensorcore") {
       default_sch_rules = ScheduleRule::DefaultCUDATensorCore();
       default_postprocs = Postproc::DefaultCUDATensorCore();
       default_mutator_probs = Mutator::DefaultCUDATensorCore();
@@ -80,6 +98,18 @@ void SpaceGeneratorNode::InitializeWithTuneContext(const TuneContext& context) {
       default_sch_rules = ScheduleRule::DefaultHexagon();
       default_postprocs = Postproc::DefaultHexagon();
       default_mutator_probs = Mutator::DefaultHexagon();
+    } else if (kind == "vnni") {
+      default_sch_rules = ScheduleRule::DefaultX86("vnni");
+      default_postprocs = Postproc::DefaultCPUTensorization();
+      default_mutator_probs = Mutator::DefaultLLVM();
+    } else if (kind == "avx512") {
+      default_sch_rules = ScheduleRule::DefaultX86("avx512");
+      default_postprocs = Postproc::DefaultCPUTensorization();
+      default_mutator_probs = Mutator::DefaultLLVM();
+    } else if (kind == "c") {
+      default_sch_rules = ScheduleRule::DefaultMicro();
+      default_postprocs = Postproc::DefaultMicro();
+      default_mutator_probs = Mutator::DefaultMicro();
     } else {
       LOG(FATAL) << "Unsupported kind: " << kind;
       throw;

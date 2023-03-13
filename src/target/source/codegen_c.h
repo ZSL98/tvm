@@ -75,7 +75,7 @@ class CodeGenC : public ExprFunctor<void(const PrimExpr&, std::ostream&)>,
    * \brief Finalize the compilation and return the code.
    * \return The code.
    */
-  std::string Finish();
+  virtual std::string Finish();
   /*!
    * \brief Print the Stmt n to CodeGenC->stream
    * \param n The statement to be printed.
@@ -99,10 +99,11 @@ class CodeGenC : public ExprFunctor<void(const PrimExpr&, std::ostream&)>,
   // The following parts are overloadable print operations.
   /*!
    * \brief Print the function header before the argument list
+   * \param os The output stream
    *
    *  Example: stream << "void";
    */
-  virtual void PrintFuncPrefix();  // NOLINT(*)
+  virtual void PrintFuncPrefix(std::ostream& os);  // NOLINT(*)
   /*!
    * \brief Print extra function attributes
    *
@@ -231,6 +232,14 @@ class CodeGenC : public ExprFunctor<void(const PrimExpr&, std::ostream&)>,
   virtual bool IsScopePartOfType() const { return true; }
 
   /*!
+   * \brief Generate forward function declarations.
+   * \param global_symbol The symbolc of the target function.
+   * \param args The arguments to the function.
+   * \param os The output stream.
+   */
+  virtual void GenerateForwardFunctionDeclarations(String global_symbol,
+                                                   const Array<PrimExpr>& args) {}
+  /*!
    * \brief Print external function call.
    * \param ret_type The return type.
    * \param global_symbol The symbolc of the target function.
@@ -253,7 +262,7 @@ class CodeGenC : public ExprFunctor<void(const PrimExpr&, std::ostream&)>,
    */
   void RegisterHandleType(const VarNode* buf_var, DataType t);
   // override
-  void PrintSSAAssign(const std::string& target, const std::string& src, DataType t) final;
+  void PrintSSAAssign(const std::string& target, const std::string& src, DataType t) override;
   /*! \brief reserves common C keywords */
   void ReserveKeywordsAsUnique();
 
@@ -272,10 +281,10 @@ class CodeGenC : public ExprFunctor<void(const PrimExpr&, std::ostream&)>,
   const Op& builtin_call_extern_ = builtin::call_extern();
   const Op& builtin_call_pure_extern_ = builtin::call_pure_extern();
   Integer constants_byte_alignment_ = 16;
-
- private:
   /*! \brief whether to print in SSA form */
   bool print_ssa_form_{false};
+
+ private:
   /*! \brief set of volatile buf access */
   std::unordered_set<const VarNode*> volatile_buf_;
   // deep comparison of PrimExpr

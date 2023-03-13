@@ -21,6 +21,7 @@
 #include <tvm/ir/module.h>
 #include <tvm/node/structural_equal.h>
 #include <tvm/node/structural_hash.h>
+#include <tvm/tir/analysis.h>
 
 #include <memory>
 
@@ -37,7 +38,7 @@ class ModuleEqualityStructural : public ModuleEquality {
 
 class SEqualHandlerIgnoreNDArray : public SEqualHandlerDefault {
  public:
-  SEqualHandlerIgnoreNDArray() : SEqualHandlerDefault(false, nullptr) {}
+  SEqualHandlerIgnoreNDArray() : SEqualHandlerDefault(false, nullptr, false) {}
 
  protected:
   bool DispatchSEqualReduce(const ObjectRef& lhs, const ObjectRef& rhs, bool map_free_vars,
@@ -73,14 +74,36 @@ class ModuleEqualityIgnoreNDArray : public ModuleEquality {
   }
 };
 
+// The NDArray-ignoring variant of structural equal / hash is used for the module equality
+// on the extracted anchor blocks.
+class ModuleEqualityAnchorBlock : public ModuleEquality {
+  size_t Hash(IRModule mod) const {
+    auto anchor_block = tir::FindAnchorBlock(mod);
+    if (anchor_block) {
+      return SHashHandlerIgnoreNDArray().Hash(GetRef<tir::Block>(anchor_block), false);
+    }
+    return ModuleEqualityIgnoreNDArray().Hash(mod);
+  }
+  bool Equal(IRModule lhs, IRModule rhs) const {
+    auto anchor_block_lhs = tir::FindAnchorBlock(lhs);
+    auto anchor_block_rhs = tir::FindAnchorBlock(rhs);
+    if (anchor_block_lhs && anchor_block_rhs) {
+      return SEqualHandlerIgnoreNDArray().Equal(GetRef<tir::Block>(anchor_block_lhs),
+                                                GetRef<tir::Block>(anchor_block_rhs), false);
+    }
+    return ModuleEqualityIgnoreNDArray().Equal(lhs, rhs);
+  }
+};
+
 std::unique_ptr<ModuleEquality> ModuleEquality::Create(const std::string& mod_eq_name) {
   if (mod_eq_name == "structural") {
     return std::make_unique<ModuleEqualityStructural>();
   } else if (mod_eq_name == "ignore-ndarray") {
     return std::make_unique<ModuleEqualityIgnoreNDArray>();
+  } else if (mod_eq_name == "anchor-block") {
+    return std::make_unique<ModuleEqualityAnchorBlock>();
   }
   LOG(FATAL) << "Unknown module equality " << mod_eq_name;
-  return nullptr;
 }
 
 }  // namespace meta_schedule

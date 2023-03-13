@@ -310,7 +310,6 @@ inline const char* DLDataTypeCode2Str(DLDataTypeCode type_code) {
       return "bfloat";
     default:
       LOG(FATAL) << "unknown type_code=" << static_cast<int>(type_code);
-      return "";
   }
 }
 
@@ -349,7 +348,7 @@ inline std::string DLDataType2String(DLDataType t) {
 inline DLDataType String2DLDataType(std::string s) {
   DLDataType t;
   // handle void type
-  if (s.length() == 0) {
+  if (s.length() == 0 || s == "void") {
     t = DataType::Void();
     return t;
   }

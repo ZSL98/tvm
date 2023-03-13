@@ -33,9 +33,13 @@ if (OS)
 endif()
 
 if(USE_OPENCL)
-  if (ANDROID_ABI)
-    set_property(TARGET tvm_rpc PROPERTY LINK_FLAGS -fuse-ld=gold)
-  endif()
+   if (ANDROID_ABI)
+     if(DEFINED ENV{ANDROID_NDK_MAJOR})
+       if($ENV{ANDROID_NDK_MAJOR} VERSION_LESS "23")
+         set_property(TARGET tvm_rpc PROPERTY LINK_FLAGS -fuse-ld=gold)
+       endif()
+     endif()
+   endif()
 endif()
 
 target_include_directories(

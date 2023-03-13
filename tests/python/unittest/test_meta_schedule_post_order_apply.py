@@ -122,23 +122,6 @@ class TrinityMatmulProcessedForReference:
                 D[vi, vj] = (B[vi, vj] + T.float32(3)) * T.float32(5)
 
 
-@tvm.script.ir_module
-class MatmulCustomized:
-    @T.prim_func
-    def main(a: T.handle, b: T.handle, c: T.handle) -> None:
-        T.func_attr({"global_symbol": "main"})
-        A = T.match_buffer(a, (1024, 1024), "float32")
-        B = T.match_buffer(b, (1024, 1024), "float32")
-        C = T.match_buffer(c, (1024, 1024), "float32")
-        with T.block("root"):
-            for i, j, k in T.grid(1024, 1024, 1024):
-                with T.block("matmul"):
-                    T.block_attr({"schedule_rule": "tvm.meta_schedule.test.custom_search_space"})
-                    vi, vj, vk = T.axis.remap("SSR", [i, j, k])
-                    with T.init():
-                        C[vi, vj] = 0.0
-                    C[vi, vj] = C[vi, vj] + A[vi, vk] * B[vk, vj]
-
 # fmt: on
 # pylint: enable=invalid-name,no-member,line-too-long,too-many-nested-blocks,no-self-argument
 
@@ -382,32 +365,6 @@ def test_meta_schedule_post_order_apply_remove_block():
         )
 
 
-def test_meta_schedule_custom_search_space():
-    mod = MatmulCustomized
-    context = TuneContext(
-        mod=mod,
-        target=Target("llvm"),
-        task_name="Custom Search Space Task",
-        space_generator=PostOrderApply(
-            sch_rules=[],
-            postprocs=[],
-            mutator_probs={},
-        ),
-    )
-    post_order_apply = context.space_generator
-    post_order_apply.generate_design_space(mod)
-    called = False
-
-    def custom_search_space_func(sch: Schedule, _: BlockRV) -> List[Schedule]:
-        nonlocal called
-        called = True
-        return [sch]
-
-    register_func("tvm.meta_schedule.test.custom_search_space", custom_search_space_func)
-    post_order_apply.generate_design_space(mod)
-    assert called
-
-
 def test_target_blocks_search_space():
     # Test that specific blocks of trinity matmul can be targeted.
     def filter_fn(block, target_names) -> bool:
@@ -445,6 +402,27 @@ def test_target_blocks_search_space():
     ## Finally check that all blocks can be extracted by name.
     schs = _get_sch(lambda block: filter_fn(block, ["A", "B", "C"]))
     assert len(schs) == 8
+
+
+def test_meta_schedule_derived_object():
+    @derived_object
+    class RemoveBlock(PyScheduleRule):
+        @classmethod
+        def class_construct(cls):
+            return cls()
+
+        @staticmethod
+        def static_construct():
+            return RemoveBlock()
+
+    inst_by_init = RemoveBlock()
+    assert isinstance(inst_by_init, RemoveBlock)
+
+    inst_by_classmethod = RemoveBlock.class_construct()
+    assert isinstance(inst_by_classmethod, RemoveBlock)
+
+    inst_by_staticmethod = RemoveBlock.static_construct()
+    assert isinstance(inst_by_staticmethod, RemoveBlock)
 
 
 if __name__ == "__main__":

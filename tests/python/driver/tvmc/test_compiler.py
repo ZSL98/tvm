@@ -40,11 +40,12 @@ from tvm.contrib import utils
 
 def test_save_dumps(tmpdir_factory):
     tmpdir = tmpdir_factory.mktemp("data")
-    dump_formats = {"relay": "fake relay", "ll": "fake llvm", "asm": "fake asm"}
+    dump_formats = {"relay": "fake relay", "tir": "fake tir", "ll": "fake llvm", "asm": "fake asm"}
     tvmc.compiler.save_dumps("fake_module", dump_formats, dump_root=tmpdir)
 
     assert path.exists("{}/{}".format(tmpdir, "fake_module.ll"))
     assert path.exists("{}/{}".format(tmpdir, "fake_module.asm"))
+    assert path.exists("{}/{}".format(tmpdir, "fake_module.tir"))
     assert path.exists("{}/{}".format(tmpdir, "fake_module.relay"))
 
 
@@ -69,7 +70,11 @@ def verify_compile_tflite_module(model, shape_dict=None, use_vm=False):
     pytest.importorskip("tflite")
     tvmc_model = tvmc.load(model, shape_dict=shape_dict)
     tvmc_package = tvmc.compile(
-        tvmc_model, target="llvm", dump_code="ll", desired_layout="NCHW", use_vm=use_vm
+        tvmc_model,
+        target="llvm",
+        dump_code="ll",
+        desired_layout="NCHW",
+        use_vm=use_vm,
     )
     dumps_path = tvmc_package.package_path + ".ll"
     verify_tvmc_package(tvmc_package, dumps_path, use_vm=use_vm)
@@ -85,6 +90,28 @@ def test_compile_tflite_module(use_vm, tflite_mobilenet_v1_1_quant):
     shape_string = "input:[1,224,224,3]"
     shape_dict = tvmc.shape_parser.parse_shape_string(shape_string)
     verify_compile_tflite_module(tflite_mobilenet_v1_1_quant, shape_dict, use_vm=use_vm)
+
+
+def test_single_tir_dump(tflite_mobilenet_v1_1_quant):
+    pytest.importorskip("tflite")
+    tvmc_model = tvmc.load(tflite_mobilenet_v1_1_quant)
+    tvmc_package = tvmc.compile(tvmc_model, target="llvm", dump_code="tir")
+    dumps_path = tvmc_package.package_path + ".tir"
+    assert os.path.exists(dumps_path)
+    with open(dumps_path) as f:
+        assert "tir" in f.read()
+
+
+def test_code_dumps(tflite_mobilenet_v1_1_quant):
+    pytest.importorskip("tflite")
+    tvmc_model = tvmc.load(tflite_mobilenet_v1_1_quant)
+    dump_code = ["asm", "ll", "tir", "relay"]
+    tvmc_package = tvmc.compile(tvmc_model, target="llvm", dump_code=dump_code)
+    for ext in dump_code:
+        dumps_path = tvmc_package.package_path + "." + ext
+        assert os.path.exists(dumps_path)
+        with open(dumps_path) as f:
+            assert len(f.read()) > 0
 
 
 # This test will be skipped if the AArch64 cross-compilation toolchain is not installed.
@@ -508,20 +535,15 @@ def test_compile_check_configs_composite_target(mock_pkg, mock_pc, mock_fe, mock
     tvmc_model = tvmc.load("no_file_needed")
     tvmc.compile(tvmc_model, target="mockcodegen -testopt=value, llvm")
 
-    assert mock_pc.call_count == 2
-    codegen_partition_context = mock.call(
-        config={"relay.ext.mock.options": {"testopt": "value"}},
-    )
+    assert mock_pc.call_count == 1
     codegen_compile_context = mock.call(
         config={"relay.ext.mock.options": {"testopt": "value"}},
         opt_level=3,
         disabled_pass=None,
+        instruments=None,
     )
     mock_pc.assert_has_calls(
         [
-            codegen_partition_context,
-            codegen_partition_context.__enter__(),
-            codegen_partition_context.__exit__(None, None, None),
             codegen_compile_context,
             codegen_compile_context.__enter__(),
             codegen_compile_context.__exit__(None, None, None),
@@ -695,6 +717,28 @@ def test_compile_check_workspace_pools(mock_pkg, mock_fe, mock_relay):
 
     assert mock_relay.call_count == 1
     assert mock_relay.call_args_list[0][1]["workspace_memory_pools"] == memory_pools
+
+
+def test_compile_check_pass_instrument(keras_resnet50):
+    pytest.importorskip("tensorflow")
+
+    @tvm.instrument.pass_instrument
+    class PassesCounter:
+        def __init__(self):
+            self.run_before_count = 0
+            self.run_after_count = 0
+
+        def run_before_pass(self, mod, info):
+            self.run_before_count = self.run_before_count + 1
+
+        def run_after_pass(self, mod, info):
+            self.run_after_count = self.run_after_count + 1
+
+    passes_counter = PassesCounter()
+    tvmc_model = tvmc.load(keras_resnet50)
+    tvmc.compile(tvmc_model, target="llvm", instruments=[passes_counter])
+    assert passes_counter.run_after_count > 0
+    assert passes_counter.run_after_count == passes_counter.run_before_count
 
 
 if __name__ == "__main__":

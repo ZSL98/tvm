@@ -105,8 +105,8 @@ def matmul_relu_ann2(a: T.handle, b: T.handle, d: T.handle) -> None:
 class ModuleWithMultipleFuncs:
     @T.prim_func
     def vector_add(
-        A: T.Buffer[128, "float32"],
-        B: T.Buffer[128, "float32"],
+        A: T.Buffer(128, "float32"),
+        B: T.Buffer(128, "float32"),
     ) -> None:
         for i in range(128):
             with T.block("init"):
@@ -115,8 +115,8 @@ class ModuleWithMultipleFuncs:
 
     @T.prim_func
     def vector_add_2(
-        A: T.Buffer[128, "float32"],
-        B: T.Buffer[128, "float32"],
+        A: T.Buffer(128, "float32"),
+        B: T.Buffer(128, "float32"),
     ) -> None:
         for i in range(128):
             with T.block("init"):
@@ -125,7 +125,7 @@ class ModuleWithMultipleFuncs:
 
 
 @T.prim_func
-def tuple_reduction(data: T.Buffer[(4, 32), "float32"], T_add: T.Buffer[(4,), "float32"]) -> None:
+def tuple_reduction(data: T.Buffer((4, 32), "float32"), T_add: T.Buffer((4,), "float32")) -> None:
     # function attr dict
     T.func_attr({"global_symbol": "main", "tir.noalias": True})
     # body
@@ -150,7 +150,7 @@ def tuple_reduction(data: T.Buffer[(4, 32), "float32"], T_add: T.Buffer[(4,), "f
                 data_red_temp_v1[ax0] = v_data_red_temp_v1
         for i0 in range(4):
             with T.block("T_add"):
-                (ax0,) = T.axis.remap("S", [i0])
+                ax0 = T.axis.remap("S", [i0])
                 T.reads(data_red_temp_v0[ax0], data_red_temp_v1[ax0])
                 T.writes(T_add[ax0])
                 T_add[ax0] = data_red_temp_v0[ax0] + data_red_temp_v1[ax0]

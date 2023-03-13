@@ -49,8 +49,8 @@ AotExecutor::AotExecutor(tvm::runtime::Module module, const std::vector<Device>&
   ICHECK_EQ(devices_[0].device_id, expected_device.device_id)
       << "At this time, AOTExecutor supports only execution on kDLCPU 0";
   // TODO(tvm-team): Temporary hack since Hexagon is defined different than kDLCPU.
-  bool is_valid_device = (TVMDeviceExtType(devices_[0].device_type) == kDLHexagon) ||
-                         (DLDeviceType(devices_[0].device_type) == kDLCPU);
+  bool is_valid_device =
+      (devices_[0].device_type == kDLHexagon) || (devices_[0].device_type == kDLCPU);
   CHECK(is_valid_device)
       << "At this time, AOTExecutor supports only execution on kDLCPU 0 or kDLHexagon 0";
 
@@ -156,6 +156,9 @@ PackedFunc AotExecutor::GetFunction(const std::string& name,
       CHECK(String::CanConvertFrom(args[0])) << "Input key is not a string";
       *rv = this->GetInputIndex(tvm::runtime::SanitizeName(args[0].operator String()));
     });
+  } else if (name == "get_input_name") {
+    return PackedFunc(
+        [sptr_to_self, this](TVMArgs args, TVMRetValue* rv) { *rv = this->GetInputName(args[0]); });
   } else {
     return PackedFunc();
   }
@@ -189,6 +192,11 @@ int AotExecutor::GetInputIndex(const std::string& name) {
     }
   }
   return -1;
+}
+
+std::string AotExecutor::GetInputName(int index) {
+  auto inputs = metadata_->inputs();
+  return inputs[index]->name();
 }
 
 int AotExecutor::GetOutputIndex(const std::string& name) {

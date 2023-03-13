@@ -214,6 +214,32 @@ class OpaqueAccessError : public ScheduleError {
   Block scope_root_;
 };
 
+class ProducerHasNonTrivialPredicateError : public ScheduleError {
+ public:
+  explicit ProducerHasNonTrivialPredicateError(IRModule mod, BlockRealize producer,
+                                               PrimExpr new_predicate)
+      : mod_(mod), producer_(producer), new_predicate_(new_predicate) {}
+
+  String FastErrorString() const final {
+    return "ScheduleError: The producer block has a non-trivial predicate.";
+  }
+
+  String DetailRenderTemplate() const final {
+    std::ostringstream os;
+    os << "ScheduleError: The producer block {0} has a non-trivial predicate "
+       << producer_->predicate << " that cannot be implied by the synthesized predicate "
+       << new_predicate_ << " of the new inlined block.";
+    return os.str();
+  }
+
+  IRModule mod() const final { return mod_; }
+  Array<ObjectRef> LocationsOfInterest() const final { return {producer_}; }
+
+  IRModule mod_;
+  BlockRealize producer_;
+  PrimExpr new_predicate_;
+};
+
 /*!
  * \brief The base class of the inliner, which handles:
  * 1) Substitute a subtree with the specific block being inlined
@@ -237,12 +263,10 @@ class BaseInliner : public StmtExprMutator {
 
   PrimExpr VisitExpr_(const LoadNode* op) final {
     LOG(FATAL) << "Unexpected use of deprecated LoadNode.  Please use BufferLoadNode instead.";
-    return PrimExpr();
   }
 
   Stmt VisitStmt_(const StoreNode* op) final {
     LOG(FATAL) << "Unexpected use of deprecated StoreNode.  Please use BufferStoreNode instead.";
-    return Stmt();
   }
 
   Stmt VisitStmt_(const ForNode* loop) final {
@@ -533,10 +557,11 @@ class ReverseComputeInliner : public BaseInliner {
  public:
   explicit ReverseComputeInliner(const Buffer& inlined_buffer, const BlockNode* producer_block,
                                  const BlockRealize& consumer_block_realize,
-                                 const StmtSRef& scope_root_sref)
+                                 const StmtSRef& scope_root_sref, const IRModule& mod)
       : BaseInliner(inlined_buffer, consumer_block_realize->block, scope_root_sref),
         producer_block_(producer_block),
-        consumer_block_(consumer_block_realize->block.get()) {
+        consumer_block_(consumer_block_realize->block.get()),
+        mod_(mod) {
     // Initialize the predicates to ensure consumer block iters are in-bound
     consumer_iter_in_bound_ = Bool(true);
     for (const IterVar& iter : consumer_block_realize->block->iter_vars) {
@@ -583,7 +608,7 @@ class ReverseComputeInliner : public BaseInliner {
         /*indices=*/buffer_load_indices_,
         /*input_iters=*/consumer_iter_doms,
         /*predicate=*/true,
-        /*check_level=*/arith::IterMapLevel::Bijective,
+        /*check_level=*/arith::IterMapLevel::NoCheck,
         /*analyzer=*/&analyzer_,
         /*simplify_trivial_iterators=*/false);
     buffer_load_iter_map_ = res->indices;
@@ -626,14 +651,22 @@ class ReverseComputeInliner : public BaseInliner {
     // Substitute the producer block iters with the its bindings since the predicate in BlockRealize
     // should not contain the block iters
     predicate = Substitute(predicate, subst_map);
+    predicate = analyzer_.Simplify(predicate);
     return predicate;
   }
 
   Stmt VisitStmt_(const BlockRealizeNode* op) final {
     BlockRealize new_block_realize = Downcast<BlockRealize>(StmtMutator::VisitStmt_(op));
     if (op->block.get() == producer_block_) {
-      new_block_realize.CopyOnWrite()->predicate =
-          BuildInlinedConsumerPredicate(new_block_realize.get());
+      auto new_predicate = BuildInlinedConsumerPredicate(new_block_realize.get());
+
+      With<arith::ConstraintContext> ctx(&analyzer_, new_predicate);
+      if (!analyzer_.CanProve(op->predicate)) {
+        // We do not allow cases where the new predicate for the inlined block cannot
+        // imply the original predicate in the producer block.
+        throw ProducerHasNonTrivialPredicateError(mod_, GetRef<BlockRealize>(op), new_predicate);
+      }
+      new_block_realize.CopyOnWrite()->predicate = new_predicate;
     }
     return std::move(new_block_realize);
   }
@@ -749,6 +782,8 @@ class ReverseComputeInliner : public BaseInliner {
   PrimExpr consumer_iter_in_bound_{nullptr};
   /*! \brief The arithmetic analyzer */
   arith::Analyzer analyzer_;
+  /*! \brief The target module, only used for error reporting. */
+  const IRModule& mod_;
 };
 
 void ComputeInlineImpl(ScheduleState self, const StmtSRef& producer_block_sref,
@@ -809,12 +844,14 @@ void ReverseComputeInlineImpl(ScheduleState self, const StmtSRef& consumer_block
       NotSingleReadWriteBuffer::GetSingleRead(self, consumer_block, scope_root_sref);
   // Step 2. Check completeness
   CheckCompleteBlock(self, consumer_block_sref, scope_root_sref);
-  // Step 3. Check if the consumer has a single complete producer
+  // Step 3. Check if the consumer has a single complete producer, and the producer is not an output
+  // block
   StmtSRef producer_block_sref =
       NonSingleProducerError::Check(self, consumer_block_sref, scope_root_sref);
+  CheckNotOutputBlock(self, producer_block_sref, scope_root_sref);
   // Step 4. Analyze the block body
   ReverseComputeInliner inliner(inlined_buffer, producer_block_sref->StmtAs<BlockNode>(),
-                                consumer_block_realize, scope_root_sref);
+                                consumer_block_realize, scope_root_sref, self->mod);
   if (!inliner.BodyPatternAllowInline(consumer_block_realize)) {
     throw BodyAnalysisError(true, self->mod, consumer_block);
   }
@@ -831,6 +868,13 @@ void ReverseComputeInlineImpl(ScheduleState self, const StmtSRef& consumer_block
     return;
   }
   self->Replace(scope_root_sref, tgt_stmt, inliner.block_reuse);
+  // Step 8. Update the cached flags
+  arith::Analyzer analyzer;
+  BlockInfo& block_info = self->block_info[producer_block_sref];
+  block_info.affine_binding = IsAffineBinding(
+      /*realize=*/GetBlockRealize(self, producer_block_sref),
+      /*loop_var_ranges=*/LoopDomainOfSRefTreePath(GetRef<StmtSRef>(producer_block_sref->parent)),
+      /*analyzer=*/&analyzer);
 }
 
 bool CanReverseComputeInline(const ScheduleState& self, const StmtSRef& block_sref) {

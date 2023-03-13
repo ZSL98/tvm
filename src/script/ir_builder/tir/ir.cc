@@ -32,6 +32,8 @@ Buffer BufferDecl(Array<PrimExpr> shape, DataType dtype, String buffer_name, Opt
                   Optional<Array<PrimExpr>> strides, Optional<PrimExpr> elem_offset,
                   String storage_scope, int align, int offset_factor, String buffer_type,
                   Optional<Array<IntImm>> axis_separators) {
+  CHECK(buffer_type == "auto" || buffer_type == "default" || buffer_type.empty())
+      << "ValueError: `buffer_type` must be `auto` or `default` or empty";
   Var buffer_data;
   if (!data.defined()) {
     DataType storage_dtype = dtype;
@@ -48,7 +50,7 @@ Buffer BufferDecl(Array<PrimExpr> shape, DataType dtype, String buffer_name, Opt
   }
   return Buffer(buffer_data, dtype, shape, strides.value_or(Array<PrimExpr>()),
                 elem_offset.value_or(PrimExpr()), buffer_name, align, offset_factor,
-                (buffer_type == "auto_broadcast") ? tvm::tir::kAutoBroadcast : tvm::tir::kDefault,
+                (buffer_type == "auto" ? tvm::tir::kAutoBroadcast : tvm::tir::kDefault),
                 axis_separators.value_or(Array<IntImm>()));
 }
 
@@ -58,7 +60,6 @@ PrimFuncFrame PrimFunc() {
   n->args.clear();
   n->ret_type = NullOpt;
   n->buffer_map.clear();
-  n->preflattened_buffer_map.clear();
   n->attrs = NullOpt;
   n->env_threads.clear();
   n->root_alloc_buffers.clear();
@@ -135,26 +136,6 @@ Buffer MatchBuffer(ObjectRef param, Array<PrimExpr> shape, DataType dtype, Optio
     LOG(FATAL) << "ValueError: Unexpected type for TIR MatchBuffer.";
   }
   return buffer;
-}
-
-void PreflattenedBuffer(Buffer postflattened_buffer, Array<PrimExpr> shape, DataType dtype,
-                        Optional<Var> data, Array<PrimExpr> strides, PrimExpr elem_offset,
-                        String storage_scope, int align, int offset_factor, String buffer_type_str,
-                        Array<IntImm> axis_separators) {
-  PrimFuncFrame frame = FindPrimFuncFrame("T.preflattened_buffer");
-  for (auto const& p : frame->buffer_map) {
-    if (p.second.same_as(postflattened_buffer)) {
-      String buffer_name(postflattened_buffer->name + "_preflatten");
-      Buffer buffer =
-          BufferDecl(shape, dtype, buffer_name, data.value_or(p.second->data), strides, elem_offset,
-                     storage_scope, align, offset_factor, buffer_type_str, axis_separators);
-      details::Namer::Name(buffer, buffer_name);
-      frame->preflattened_buffer_map.Set(p.first, buffer);
-      return;
-    }
-  }
-  LOG(FATAL) << "ValueError: postflattened buffer " << postflattened_buffer->name
-             << " does not exist.";
 }
 
 BlockFrame Block(String name, bool no_realize) {
@@ -402,7 +383,20 @@ AssertFrame Assert(PrimExpr condition, String message) {
   return AssertFrame(n);
 }
 
-LetFrame Let(Var var, PrimExpr value) {
+LetFrame LetStmt(PrimExpr value, Optional<Type> type_annotation, Optional<Var> var) {
+  ObjectPtr<LetFrameNode> n = make_object<LetFrameNode>();
+  if (var.defined()) {
+    n->var = var.value();
+  } else if (type_annotation.defined()) {
+    n->var = Var("v", type_annotation.value());
+  } else {
+    n->var = Var("v", value.dtype());
+  }
+  n->value = value;
+  return LetFrame(n);
+}
+
+LetFrame LegacyLetStmt(Var var, PrimExpr value) {
   ObjectPtr<LetFrameNode> n = make_object<LetFrameNode>();
   n->var = var;
   n->value = value;
@@ -435,6 +429,10 @@ LaunchThreadFrame LaunchThread(Var var, PrimExpr extent) {
   return LaunchThreadFrame(n);
 }
 
+LaunchThreadFrame LaunchThread(String thread_tag, PrimExpr extent) {
+  return LaunchThread(EnvThread(thread_tag), extent);
+}
+
 RealizeFrame Realize(tvm::tir::BufferRegion buffer_slice, String storage_scope,
                      PrimExpr condition) {
   ObjectPtr<RealizeFrameNode> n = make_object<RealizeFrameNode>();
@@ -452,20 +450,19 @@ AllocateFrame Allocate(Array<PrimExpr> extents, DataType dtype, String storage_s
   n->storage_scope = storage_scope;
   n->condition = condition.value_or(tvm::Bool(true));
   n->annotations = annotations.value_or(Map<String, ObjectRef>());
-  n->buffer = BufferDecl(extents, dtype, "", NullOpt, NullOpt, NullOpt, storage_scope, 0, 0,
-                         "default", NullOpt);
+  n->buffer_var = Var("", tvm::PointerType(tvm::PrimType(dtype), storage_scope));
   return AllocateFrame(n);
 }
 
 AllocateConstFrame AllocateConst(tvm::runtime::NDArray data, DataType dtype,
-                                 Array<PrimExpr> extents, Map<String, ObjectRef> annotations) {
+                                 Array<PrimExpr> extents,
+                                 Optional<Map<String, ObjectRef>> annotations) {
   ObjectPtr<AllocateConstFrameNode> n = make_object<AllocateConstFrameNode>();
   n->dtype = dtype;
   n->extents = extents;
   n->data = data;
-  n->annotations = annotations;
-  n->buffer =
-      BufferDecl(extents, dtype, "", NullOpt, NullOpt, NullOpt, "", 0, 0, "default", NullOpt);
+  n->annotations = annotations.value_or(Map<String, ObjectRef>());
+  n->buffer_var = Var("", tvm::PointerType(tvm::PrimType(dtype)));
   return AllocateConstFrame(n);
 }
 
@@ -514,6 +511,34 @@ Var EnvThread(String thread_tag) {
 }
 
 void BufferStore(Buffer buffer, PrimExpr value, Array<PrimExpr> indices) {
+  runtime::DataType buffer_dtype = buffer->dtype;
+  int index_lanes = indices.size() ? indices.back().dtype().lanes() : 1;
+  runtime::DataType lhs_dtype = buffer_dtype.with_lanes(buffer_dtype.lanes() * index_lanes);
+  runtime::DataType rhs_dtype = value->dtype;
+  if (lhs_dtype != rhs_dtype) {
+    if (lhs_dtype.lanes() != rhs_dtype.lanes()) {
+      LOG(FATAL) << "TypeError: Incompatible types in BufferStore"
+                 << ": LHS is `" << lhs_dtype << "`, RHS is `" << rhs_dtype
+                 << "`, indexing lanes: " << index_lanes;
+    }
+    if (lhs_dtype.code() != rhs_dtype.code()) {
+      if (
+          // Case 1. lhs is handle, and rhs needs to be casted to handle.
+          (lhs_dtype.code() == runtime::DataType::kHandle) ||
+          // Case 2. rhs is handle, and it needs to be casted to non-handle.
+          (rhs_dtype.code() == runtime::DataType::kHandle) ||
+          // Case 3. rhs is float or bfloat, and casting to non-float can lose precision.
+          ((lhs_dtype.code() == runtime::DataType::kInt ||
+            lhs_dtype.code() == runtime::DataType::kUInt) &&
+           (rhs_dtype.code() == runtime::DataType::kFloat ||
+            rhs_dtype.code() == runtime::DataType::kBFloat))) {
+        LOG(WARNING) << "Casting in BufferStore may lose precision"
+                     << ": LHS is `" << lhs_dtype << "`, RHS is `" << rhs_dtype
+                     << "`, indexing lanes: " << index_lanes;
+      }
+    }
+    value = tvm::cast(lhs_dtype, value);
+  }
   AddToParent(tvm::tir::BufferStore(buffer, value, indices));
 }
 
@@ -529,13 +554,15 @@ DeclBufferFrame DeclBuffer(Array<PrimExpr> shape, DataType dtype, String buffer_
   ObjectPtr<DeclBufferFrameNode> n = make_object<DeclBufferFrameNode>();
   n->buffer = BufferDecl(shape, dtype, buffer_name, data, strides, elem_offset, storage_scope,
                          align, offset_factor, buffer_type, axis_separators);
+  n->allocated = data.defined();
   return DeclBufferFrame(n);
 }
 
 void Evaluate(PrimExpr value) { AddToParent(tvm::tir::Evaluate(value)); }
 
-PrimExpr Ptr(runtime::DataType dtype, String storage_scope) {
-  return tvm::tir::Var("", tvm::PointerType(PrimType(dtype), storage_scope));
+PrimExpr Ptr(runtime::DataType dtype, String storage_scope = "global", bool is_size_var = false) {
+  PointerType type_annotation(PrimType(dtype), storage_scope);
+  return is_size_var ? tvm::tir::SizeVar("", type_annotation) : tvm::tir::Var("", type_annotation);
 }
 
 using tvm::script::ir_builder::details::Namer;
@@ -576,8 +603,7 @@ TVM_STATIC_IR_FUNCTOR(Namer, vtable)
       Namer::Name(var->var, name);
     });
 
-TVM_REGISTER_GLOBAL("script.ir_builder.tir.BufferDecl").set_body_typed(BufferDecl);
-
+TVM_REGISTER_GLOBAL("script.ir_builder.tir.Buffer").set_body_typed(BufferDecl);
 TVM_REGISTER_GLOBAL("script.ir_builder.tir.PrimFunc").set_body_typed(PrimFunc);
 TVM_REGISTER_GLOBAL("script.ir_builder.tir.Arg")
     .set_body_typed([](String name, ObjectRef obj) -> ObjectRef {
@@ -595,7 +621,6 @@ TVM_REGISTER_GLOBAL("script.ir_builder.tir.FuncName").set_body_typed(FuncName);
 TVM_REGISTER_GLOBAL("script.ir_builder.tir.FuncAttrs").set_body_typed(FuncAttrs);
 TVM_REGISTER_GLOBAL("script.ir_builder.tir.FuncRet").set_body_typed(FuncRet);
 TVM_REGISTER_GLOBAL("script.ir_builder.tir.MatchBuffer").set_body_typed(MatchBuffer);
-TVM_REGISTER_GLOBAL("script.ir_builder.tir.PreflattenedBuffer").set_body_typed(PreflattenedBuffer);
 
 TVM_REGISTER_GLOBAL("script.ir_builder.tir.Block").set_body_typed(Block);
 TVM_REGISTER_GLOBAL("script.ir_builder.tir.Init").set_body_typed(Init);
@@ -619,7 +644,8 @@ TVM_REGISTER_GLOBAL("script.ir_builder.tir.ThreadBinding").set_body_typed(Thread
 TVM_REGISTER_GLOBAL("script.ir_builder.tir.Grid").set_body_typed(Grid);
 
 TVM_REGISTER_GLOBAL("script.ir_builder.tir.Assert").set_body_typed(Assert);
-TVM_REGISTER_GLOBAL("script.ir_builder.tir.Let").set_body_typed(Let);
+TVM_REGISTER_GLOBAL("script.ir_builder.tir.LetStmt").set_body_typed(LetStmt);
+TVM_REGISTER_GLOBAL("script.ir_builder.tir.LegacyLetStmt").set_body_typed(LegacyLetStmt);
 TVM_REGISTER_GLOBAL("script.ir_builder.tir.Allocate").set_body_typed(Allocate);
 TVM_REGISTER_GLOBAL("script.ir_builder.tir.AllocateConst").set_body_typed(AllocateConst);
 TVM_REGISTER_GLOBAL("script.ir_builder.tir.Realize").set_body_typed(Realize);
@@ -629,7 +655,18 @@ TVM_REGISTER_GLOBAL("script.ir_builder.tir.If").set_body_typed(If);
 TVM_REGISTER_GLOBAL("script.ir_builder.tir.Then").set_body_typed(Then);
 TVM_REGISTER_GLOBAL("script.ir_builder.tir.Else").set_body_typed(Else);
 TVM_REGISTER_GLOBAL("script.ir_builder.tir.DeclBuffer").set_body_typed(DeclBuffer);
-TVM_REGISTER_GLOBAL("script.ir_builder.tir.LaunchThread").set_body_typed(LaunchThread);
+TVM_REGISTER_GLOBAL("script.ir_builder.tir.LaunchThread")
+    .set_body_typed([](ObjectRef thread_tag_or_var, PrimExpr extent) {
+      if (const auto* var = thread_tag_or_var.as<tvm::tir::VarNode>()) {
+        return LaunchThread(GetRef<tvm::tir::Var>(var), extent);
+      } else if (const auto* str = thread_tag_or_var.as<StringObj>()) {
+        return LaunchThread(GetRef<String>(str), extent);
+      } else {
+        LOG(FATAL) << "ValueError: Unexpected type for TIR LaunchThread: "
+                   << thread_tag_or_var->GetTypeKey();
+        throw;
+      }
+    });
 TVM_REGISTER_GLOBAL("script.ir_builder.tir.EnvThread").set_body_typed(EnvThread);
 
 TVM_REGISTER_GLOBAL("script.ir_builder.tir.BufferStore").set_body_typed(BufferStore);
@@ -638,21 +675,35 @@ TVM_REGISTER_GLOBAL("script.ir_builder.tir.Evaluate").set_body_typed(Evaluate);
 
 TVM_REGISTER_GLOBAL("script.ir_builder.tir.Ptr").set_body_typed(Ptr);
 
-TVM_REGISTER_GLOBAL("script.ir_builder.tir.Int8").set_body_typed(Int8);
-TVM_REGISTER_GLOBAL("script.ir_builder.tir.Int16").set_body_typed(Int16);
-TVM_REGISTER_GLOBAL("script.ir_builder.tir.Int32").set_body_typed(Int32);
-TVM_REGISTER_GLOBAL("script.ir_builder.tir.Int64").set_body_typed(Int64);
-TVM_REGISTER_GLOBAL("script.ir_builder.tir.UInt8").set_body_typed(UInt8);
-TVM_REGISTER_GLOBAL("script.ir_builder.tir.UInt16").set_body_typed(UInt16);
-TVM_REGISTER_GLOBAL("script.ir_builder.tir.UInt32").set_body_typed(UInt32);
-TVM_REGISTER_GLOBAL("script.ir_builder.tir.UInt64").set_body_typed(UInt64);
-TVM_REGISTER_GLOBAL("script.ir_builder.tir.Float8").set_body_typed(Float8);
-TVM_REGISTER_GLOBAL("script.ir_builder.tir.Float16").set_body_typed(Float16);
-TVM_REGISTER_GLOBAL("script.ir_builder.tir.Float32").set_body_typed(Float32);
-TVM_REGISTER_GLOBAL("script.ir_builder.tir.Float64").set_body_typed(Float64);
-TVM_REGISTER_GLOBAL("script.ir_builder.tir.Int32x4").set_body_typed(Int32x4);
-TVM_REGISTER_GLOBAL("script.ir_builder.tir.Int32x8").set_body_typed(Int32x8);
-TVM_REGISTER_GLOBAL("script.ir_builder.tir.Int32x16").set_body_typed(Int32x16);
+#define TVM_TMP_STR(x) #x
+
+#define TVM_REGISTER_GLOBAL_SIZE(Prefix, DType)                          \
+  TVM_REGISTER_GLOBAL(Prefix TVM_TMP_STR(8)).set_body_typed(DType##8);   \
+  TVM_REGISTER_GLOBAL(Prefix TVM_TMP_STR(16)).set_body_typed(DType##16); \
+  TVM_REGISTER_GLOBAL(Prefix TVM_TMP_STR(32)).set_body_typed(DType##32); \
+  TVM_REGISTER_GLOBAL(Prefix TVM_TMP_STR(64)).set_body_typed(DType##64);
+
+TVM_REGISTER_GLOBAL_SIZE("script.ir_builder.tir.Float", Float);
+TVM_REGISTER_GLOBAL_SIZE("script.ir_builder.tir.UInt", UInt);
+TVM_REGISTER_GLOBAL_SIZE("script.ir_builder.tir.Int", Int);
+
+#define TVM_REGISTER_GLOBAL_LANES(Prefix, Func)                           \
+  TVM_REGISTER_GLOBAL(Prefix TVM_TMP_STR(x4)).set_body_typed(Func##x4);   \
+  TVM_REGISTER_GLOBAL(Prefix TVM_TMP_STR(x8)).set_body_typed(Func##x8);   \
+  TVM_REGISTER_GLOBAL(Prefix TVM_TMP_STR(x16)).set_body_typed(Func##x16); \
+  TVM_REGISTER_GLOBAL(Prefix TVM_TMP_STR(x32)).set_body_typed(Func##x32); \
+  TVM_REGISTER_GLOBAL(Prefix TVM_TMP_STR(x64)).set_body_typed(Func##x64);
+
+#define TVM_REGISTER_GLOBAL_SIZES_LANES(Prefix, DType)          \
+  TVM_REGISTER_GLOBAL_LANES(Prefix TVM_TMP_STR(8), DType##8);   \
+  TVM_REGISTER_GLOBAL_LANES(Prefix TVM_TMP_STR(16), DType##16); \
+  TVM_REGISTER_GLOBAL_LANES(Prefix TVM_TMP_STR(32), DType##32); \
+  TVM_REGISTER_GLOBAL_LANES(Prefix TVM_TMP_STR(64), DType##64);
+
+TVM_REGISTER_GLOBAL_SIZES_LANES("script.ir_builder.tir.Float", Float);
+TVM_REGISTER_GLOBAL_SIZES_LANES("script.ir_builder.tir.UInt", UInt);
+TVM_REGISTER_GLOBAL_SIZES_LANES("script.ir_builder.tir.Int", Int);
+
 TVM_REGISTER_GLOBAL("script.ir_builder.tir.Boolean").set_body_typed(Boolean);
 TVM_REGISTER_GLOBAL("script.ir_builder.tir.Handle").set_body_typed(Handle);
 TVM_REGISTER_GLOBAL("script.ir_builder.tir.Void").set_body_typed(Void);

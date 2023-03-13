@@ -36,11 +36,6 @@ Follow the steps to download a resnet model via the terminal:
 Let's start editing the python file in your favorite text editor.
 """
 
-# sphinx_gallery_start_ignore
-from tvm import testing
-
-testing.utils.install_request_hook(depth=3)
-# sphinx_gallery_end_ignore
 
 ################################################################################
 # Step 0: Imports
@@ -248,7 +243,7 @@ testing.utils.install_request_hook(depth=3)
 #      ...
 #
 #      # Later run tuning and reuse tuning results
-#      tvmc.tune(model, target="llvm",tuning_records=log_file)
+#      tvmc.tune(model, target="llvm", prior_records=log_file)
 #
 # Method 2:
 #    .. code-block:: python
@@ -259,7 +254,7 @@ testing.utils.install_request_hook(depth=3)
 #      ...
 #
 #      # Later run tuning and reuse tuning results
-#      tvmc.tune(model, target="llvm",tuning_records=tuning_records)
+#      tvmc.tune(model, target="llvm", prior_records=tuning_records)
 #
 
 ################################################################################

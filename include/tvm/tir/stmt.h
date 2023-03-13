@@ -46,6 +46,8 @@ class StmtNode : public Object {
   StmtNode() = default;
   explicit StmtNode(Span span) : span(span) {}
 
+  TVM_OBJECT_ENABLE_SCRIPT_PRINTER();
+
   static constexpr const char* _type_key = "tir.Stmt";
   static constexpr const bool _type_has_method_sequal_reduce = true;
   static constexpr const bool _type_has_method_shash_reduce = true;
@@ -102,6 +104,7 @@ class LetStmt : public Stmt {
   TVM_DLL LetStmt(Var var, PrimExpr value, Stmt body, Span span = Span());
 
   TVM_DEFINE_OBJECT_REF_METHODS(LetStmt, Stmt, LetStmtNode);
+  TVM_DEFINE_OBJECT_REF_COW_METHOD(LetStmtNode);
 };
 
 /*!
@@ -158,6 +161,7 @@ class AttrStmt : public Stmt {
   TVM_DLL AttrStmt(ObjectRef node, String attr_key, PrimExpr value, Stmt body, Span span = Span());
 
   TVM_DEFINE_OBJECT_REF_METHODS(AttrStmt, Stmt, AttrStmtNode);
+  TVM_DEFINE_OBJECT_REF_COW_METHOD(AttrStmtNode);
 };
 
 /*!
@@ -206,6 +210,7 @@ class AssertStmt : public Stmt {
   TVM_DLL AssertStmt(PrimExpr condition, PrimExpr message, Stmt body, Span span = Span());
 
   TVM_DEFINE_OBJECT_REF_METHODS(AssertStmt, Stmt, AssertStmtNode);
+  TVM_DEFINE_OBJECT_REF_COW_METHOD(AssertStmtNode);
 };
 
 /*!
@@ -271,6 +276,7 @@ class Store : public Stmt {
                 Span span = Span());
 
   TVM_DEFINE_OBJECT_REF_METHODS(Store, Stmt, StoreNode);
+  TVM_DEFINE_OBJECT_REF_COW_METHOD(StoreNode);
 };
 
 /*!
@@ -442,6 +448,7 @@ class ProducerStore : public Stmt {
                         Span span = Span());
 
   TVM_DEFINE_OBJECT_REF_METHODS(ProducerStore, Stmt, ProducerStoreNode);
+  TVM_DEFINE_OBJECT_REF_COW_METHOD(ProducerStoreNode);
 };
 
 /*!
@@ -505,6 +512,7 @@ class ProducerRealize : public Stmt {
                           String storage_scope = "", Span span = Span());
 
   TVM_DEFINE_OBJECT_REF_METHODS(ProducerRealize, Stmt, ProducerRealizeNode);
+  TVM_DEFINE_OBJECT_REF_COW_METHOD(ProducerRealizeNode);
 };
 
 /*!
@@ -679,6 +687,7 @@ class AllocateConst : public Stmt {
                         Map<String, ObjectRef> annotations = Map<String, ObjectRef>(),
                         Span span = Span());
   TVM_DEFINE_OBJECT_REF_METHODS(AllocateConst, Stmt, AllocateConstNode);
+  TVM_DEFINE_OBJECT_REF_COW_METHOD(AllocateConstNode);
 };
 
 /*! \brief Declare a buffer that can be used in the body */
@@ -812,6 +821,7 @@ class SeqStmt : public Stmt {
   };
 
   TVM_DEFINE_OBJECT_REF_METHODS(SeqStmt, Stmt, SeqStmtNode);
+  TVM_DEFINE_OBJECT_REF_COW_METHOD(SeqStmtNode);
 };
 
 /*!
@@ -824,7 +834,7 @@ class IfThenElseNode : public StmtNode {
   /*! \brief The branch to be executed when condition is true. */
   Stmt then_case;
   /*! \brief The branch to be executed when condition is false, can be null. */
-  Stmt else_case;
+  Optional<Stmt> else_case;
 
   void VisitAttrs(AttrVisitor* v) {
     v->Visit("condition", &condition);
@@ -854,10 +864,11 @@ class IfThenElseNode : public StmtNode {
  */
 class IfThenElse : public Stmt {
  public:
-  TVM_DLL IfThenElse(PrimExpr condition, Stmt then_case, Stmt else_case = Stmt(),
+  TVM_DLL IfThenElse(PrimExpr condition, Stmt then_case, Optional<Stmt> else_case = NullOpt,
                      Span span = Span());
 
   TVM_DEFINE_OBJECT_REF_METHODS(IfThenElse, Stmt, IfThenElseNode);
+  TVM_DEFINE_OBJECT_REF_COW_METHOD(IfThenElseNode);
 };
 
 /*!
@@ -897,6 +908,7 @@ class Evaluate : public Stmt {
   explicit Evaluate(int value, Span span = Span()) : Evaluate(PrimExpr(value), span) {}
 
   TVM_DEFINE_OBJECT_REF_METHODS(Evaluate, Stmt, EvaluateNode);
+  TVM_DEFINE_OBJECT_REF_COW_METHOD(EvaluateNode);
 };
 
 /*!
@@ -1054,6 +1066,7 @@ class While : public Stmt {
   TVM_DLL While(PrimExpr condition, Stmt body, Span span = Span());
 
   TVM_DEFINE_OBJECT_REF_METHODS(While, Stmt, WhileNode);
+  TVM_DEFINE_OBJECT_REF_COW_METHOD(WhileNode);
 };
 
 /*!
@@ -1098,6 +1111,7 @@ class Prefetch : public Stmt {
   TVM_DLL explicit Prefetch(Buffer buffer, Array<Range> bounds, Span span = Span());
 
   TVM_DEFINE_NOTNULLABLE_OBJECT_REF_METHODS(Prefetch, Stmt, PrefetchNode);
+  TVM_DEFINE_OBJECT_REF_COW_METHOD(PrefetchNode);
 };
 
 /*!
@@ -1202,6 +1216,7 @@ class MatchBufferRegion : public ObjectRef {
   TVM_DLL explicit MatchBufferRegion(Buffer buffer, BufferRegion source);
 
   TVM_DEFINE_OBJECT_REF_METHODS(MatchBufferRegion, ObjectRef, MatchBufferRegionNode);
+  TVM_DEFINE_OBJECT_REF_COW_METHOD(MatchBufferRegionNode);
 };
 
 /*!
@@ -1600,6 +1615,9 @@ constexpr const char* meta_schedule_auto_tensorize_init = "meta_schedule.auto_te
  */
 constexpr const char* warp_execution = "warp_execution";
 
+/*! \brief Mark that a block is disallowed in auto inline. */
+constexpr const char* meta_schedule_inline_rule = "meta_schedule.inline_rule";
+
 /*!
  * \brief Check if attr_key is a pragma key extension
  * \param attr_key The attr key to be compared
@@ -1636,7 +1654,6 @@ inline const char* ForKind2String(ForKind t) {
       return "thread_binding";
   }
   LOG(FATAL) << "Unknown ForKind" << t;
-  return "Unknown";
 }
 
 }  // namespace tir

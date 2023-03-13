@@ -76,8 +76,6 @@ class BlockReadWriteDetector : public StmtExprVisitor {
   Map<Var, Buffer> buffer_var_map_;
   /*! \brief The target buffer var mapping to its matching */
   std::unordered_map<const VarNode*, MatchBufferRegion> match_buffers_;
-  /*! \brief The analyzer for simplifying*/
-  arith::Analyzer analyzer_;
 
   /*!
    * \brief Update read/write buffers and regions with provided buffer and region
@@ -173,10 +171,10 @@ void BlockReadWriteDetector::VisitStmt_(const IfThenElseNode* op) {
     With<ConditionalBoundsContext> ctx(op->condition, &dom_map_, &hint_map_, true);
     StmtExprVisitor::VisitStmt(op->then_case);
   }
-  if (op->else_case.defined()) {
+  if (op->else_case) {
     // Visit else branch
     With<ConditionalBoundsContext> ctx(op->condition, &dom_map_, &hint_map_, false);
-    StmtExprVisitor::VisitStmt(op->else_case);
+    StmtExprVisitor::VisitStmt(op->else_case.value());
   }
 }
 
@@ -330,7 +328,12 @@ Array<BufferRegion> BlockReadWriteDetector::CollectRegions(
     ICHECK_EQ(buffers[i]->shape.size(), regions[i].size());
     for (size_t j = 0; j < regions[i].size(); j++) {
       const tvm::arith::IntSet& range = regions[i][j];
-      region.push_back(range.CoverRange(Range::FromMinExtent(0, buffers[i]->shape[j])));
+      if (range.IsSinglePoint()) {
+        PrimExpr min = range.min();
+        region.push_back(Range::FromMinExtent(min, make_const(min.dtype(), 1)));
+      } else {
+        region.push_back(range.CoverRange(Range::FromMinExtent(0, buffers[i]->shape[j])));
+      }
     }
     res.push_back(BufferRegion(buffers[i], region));
   }

@@ -48,7 +48,15 @@ run_pytest ctypes python-microtvm-project_api tests/micro/project_api
 python3 gallery/how_to/work_with_microtvm/micro_tflite.py
 python3 gallery/how_to/work_with_microtvm/micro_autotune.py
 python3 gallery/how_to/work_with_microtvm/micro_aot.py
+python3 gallery/how_to/work_with_microtvm/micro_pytorch.py
 ./gallery/how_to/work_with_microtvm/micro_tvmc.sh
+
+# without CMSIS-NN
+python3 gallery/how_to/work_with_microtvm/micro_mlperftiny.py
+# with CMSIS-NN
+export TVM_USE_CMSIS=1
+python3 gallery/how_to/work_with_microtvm/micro_mlperftiny.py
+export TVM_USE_CMSIS=
 
 # Tutorials running with Zephyr
 export TVM_MICRO_USE_HW=1

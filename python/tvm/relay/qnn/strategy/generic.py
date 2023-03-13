@@ -213,6 +213,33 @@ def qnn_add_strategy(attrs, inputs, out_type, target):
     )
 
 
+@override_native_generic_func("qnn_subtract_strategy")
+def qnn_subtract_strategy(attrs, inputs, out_type, target):
+    """qnn.subtract generic strategy"""
+    raise RuntimeError(
+        "qnn.subtract is currently only supported with Hexagon. "
+        "Please run QNN Canonicalize pass to decompose this op into supported ops."
+    )
+
+
+@override_native_generic_func("qnn_mul_strategy")
+def qnn_mul_strategy(attrs, inputs, out_type, target):
+    """qnn.mul generic strategy"""
+    raise RuntimeError(
+        "qnn.mul is currently only supported with Hexagon. "
+        "Please run QNN Canonicalize pass to decompose this op into supported ops."
+    )
+
+
+@override_native_generic_func("qnn_tanh_strategy")
+def qnn_tanh_strategy(attrs, inputs, out_type, target):
+    """qnn.tanh generic strategy"""
+    raise RuntimeError(
+        "qnn.tanh is currently only supported with Hexagon. "
+        "Please run QNN Canonicalize pass to decompose this op into supported ops."
+    )
+
+
 @override_native_generic_func("qnn_concatenate_strategy")
 def qnn_concatenate_strategy(attrs, inputs, out_type, target):
     """qnn.concatenate generic strategy"""
@@ -238,6 +265,12 @@ def qnn_dense_strategy(attrs, inputs, out_type, target):
         "qnn.dense is currently only supported with Hexagon. "
         "Please run QNN Canonicalize pass to decompose this op into supported ops."
     )
+
+
+@override_native_generic_func("qnn_dense_pack_strategy")
+def qnn_dense_pack_strategy(attrs, inputs, out_type, target):
+    """qnn.contrib_dense_pack generic strategy"""
+    raise RuntimeError("qnn.contrib_dense_pack is currently only supported with Hexagon. ")
 
 
 @override_native_generic_func("qnn_batch_matmul_strategy")

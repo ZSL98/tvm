@@ -239,21 +239,26 @@ class Schedule(Object):
         """
         return _ffi_api.ScheduleForkSeed(self)  # type: ignore # pylint: disable=no-member
 
-    @type_checked
-    def show(self, rand_var: RAND_VAR_TYPE) -> str:
-        """Returns a string representation of the value that the random variable evaluates to
+    def show(self, style: Optional[str] = None, black_format: bool = True) -> None:
+        """A sugar for print highlighted TVM script.
 
         Parameters
         ----------
-        rand_var : Union[ExprRV, BlockRV, LoopRV]
-            The random variable to be evaluated
+        style : str, optional
 
-        Returns
-        -------
-        str_repr : str
-            The string representation
+            Pygmentize printing style, auto-detected if None.  See
+            `tvm.script.highlight.cprint` for more details.
+
+        black_format: bool
+
+            If true (default), use the formatter Black to format the TVMScript
         """
-        return str(self.get(rand_var))
+        mod = self.mod
+        if mod is not None:
+            mod.show(style=style, black_format=black_format)
+        trace = self.trace
+        if trace is not None:
+            trace.show(style=style, black_format=black_format)
 
     ########## Lookup ##########
 
@@ -749,9 +754,9 @@ class Schedule(Object):
 
             @T.prim_func
             def before_add_unit_loop(
-                A: T.Buffer[(), "int32"],
-                B: T.Buffer[(), "int32"],
-                C: T.Buffer[(), "int32"],
+                A: T.Buffer((), "int32"),
+                B: T.Buffer((), "int32"),
+                C: T.Buffer((), "int32"),
             ) -> None:
                 with T.block("C"):
                     vi = T.axis.spatial(1, 0)
@@ -771,9 +776,9 @@ class Schedule(Object):
 
             @T.prim_func
             def after_add_unit_loop(
-                A: T.Buffer[(), "int32"],
-                B: T.Buffer[(), "int32"],
-                C: T.Buffer[(), "int32"],
+                A: T.Buffer((), "int32"),
+                B: T.Buffer((), "int32"),
+                C: T.Buffer((), "int32"),
             ) -> None:
                 for u in T.serial(1):
                     with T.block("C"):
@@ -1110,6 +1115,7 @@ class Schedule(Object):
         block: Union[BlockRV, str],
         write_buffer_index: Union[int, str, Buffer],
         storage_scope: str,
+        consumer_blocks: Optional[List[Union[BlockRV, str]]] = None,
     ) -> BlockRV:
         """Create a block that reads a buffer region into a write cache. It requires:
 
@@ -1130,6 +1136,9 @@ class Schedule(Object):
         storage_scope: str
             The target storage scope.
 
+        consumer_blocks: Optional[List[Union[BlockRV, str]]]
+            An optional list of consumers that should read directly from the cache.
+            If not specified, all consumers will read from the original buffer.
 
         Returns
         -------
@@ -1179,6 +1188,11 @@ class Schedule(Object):
                         B[vi, vj] = B_local[vi, vj]
 
         """
+        if consumer_blocks is None:
+            consumer_blocks = []
+
+        # Convert any string block names into Block RVs.
+        consumer_blocks = [self._normalize_block_arg(b) for b in consumer_blocks]
         block = self._normalize_block_arg(block)
 
         if not isinstance(write_buffer_index, int):
@@ -1186,7 +1200,198 @@ class Schedule(Object):
                 block, write_buffer_index, required_buffer_type="write"
             )
         return _ffi_api.ScheduleCacheWrite(  # type: ignore # pylint: disable=no-member
-            self, block, write_buffer_index, storage_scope
+            self, block, write_buffer_index, storage_scope, consumer_blocks
+        )
+
+    @type_checked
+    def reindex_cache_read(
+        self,
+        block: Union[BlockRV, str],
+        read_buffer_index: int,
+        storage_scope: str,
+        index_map: Union[IndexMap, Callable],
+    ) -> BlockRV:
+        """Create a block that reads a buffer region into a read cache using customized
+        indices specified by index map. The read region of the buffer must be a single point.
+
+        The cache stage block follows the original order of loops and block itervars in the block.
+        If a block itervar does not appear in the buffer access region, it and its corresponding
+        loop variables will be omitted. User can then use `transform_block_layout` primitive to
+        reorder the block itervars and surrounding loops of the cache read/write block.
+
+        Unlike `cache_read`, `reindex_cache_read` only supports single consumer, please use
+        `cache_read` when there are multiple consumers.
+
+        Parameters
+        ----------
+        block : BlockRV
+            The consumer block of the target buffer.
+        read_buffer_index: int
+            The index of the buffer in block's read region.
+        storage_scope: str
+            The target storage scope.
+        index_map: Union[IndexMap, Callable]
+            User defined indices to access allocated cache buffer, maps from block iter vars.
+
+        Returns
+        -------
+        cached_block : BlockRV
+            The block of the cache stage
+
+        Examples
+        --------
+        Before reindex_cache_read, in TensorIR, the IR is:
+
+        .. code-block:: python
+
+            @T.prim_func
+            def before_reindex_cache_read(a: T.handle, b: T.handle) -> None:
+                A = T.match_buffer(a, (128, 128))
+                B = T.match_buffer(b, (128, 128))
+                for i, j in T.grid(128, 128):
+                    with T.block("B"):
+                        vi, vj = T.axis.remap("SS", [i, j])
+                        B[vi, vj] = A[vi, vj] * 2.0
+
+        Create the schedule and reindex_cache_read:
+
+        .. code-block:: python
+
+            sch = tir.Schedule(before_cache_read)
+            block_b = sch.get_block("B")
+            sch.reindex_cache_read(block_b, 0, "local", lambda vi, vj: (vj, vi))
+            print(sch.mod["main"].script())
+
+        After applying reindex_cache_read, the IR becomes:
+
+        .. code-block:: python
+
+            @T.prim_func
+            def after_reindex_cache_read(a: T.handle, b: T.handle) -> None:
+                A = T.match_buffer(a, (128, 128))
+                B = T.match_buffer(b, (128, 128))
+                A_local = T.alloc_buffer((128, 128), scope="local")
+                for i, j in T.grid(128, 128):
+                    with T.block("A_local"):
+                        vi, vj = T.axis.remap("SS", [i, j])
+                        A_local[vj, vi] = A[vi, vj]
+                for i, j in T.grid(128, 128):
+                    with T.block("B"):
+                        vi, vj = T.axis.remap("SS", [i, j])
+                        B[vi, vj] = A_local[vj, vi] * 2.0
+
+        See Also
+        --------
+        reindex_cache_write
+        transform_block_layout
+        transform_layout
+        cache_read
+        reindex
+        """
+        # Convert any string block names into Block RVs.
+        block = self._normalize_block_arg(block)
+
+        if callable(index_map):
+            index_map = IndexMap.from_func(index_map)
+        return _ffi_api.ScheduleReindexCacheRead(  # type: ignore # pylint: disable=no-member
+            self, block, read_buffer_index, storage_scope, index_map
+        )
+
+    @type_checked
+    def reindex_cache_write(
+        self,
+        block: Union[BlockRV, str],
+        write_buffer_index: int,
+        storage_scope: str,
+        index_map: Union[Callable, IndexMap],
+    ) -> BlockRV:
+        r"""Create a block that reads a buffer region into a write cache using customized
+        indices specified by index map. The write region of the buffer must be a single point.
+
+        The cache stage block follows the original order of loops and block itervars in the block.
+        If a block itervar does not appear in the buffer access region, it and its corresponding
+        loop variables will be omitted. User can then use `transform_block_layout` primitive to
+        reorder the block itervars and surrounding loops of the cache read/write block.
+
+        Unlike `cache_write`, `reindex_cache_write` only supports single consumer, please use
+        `cache_write` when there are multiple consumers.
+
+        Parameters
+        ----------
+        block : Union[BlockRV, str]
+            The consumer block of the target buffer.
+        write_buffer_index: int
+            The index of the buffer in block's write region.
+        storage_scope: str
+            The target storage scope.
+        index_map: Union[Callable, IndexMap]
+            User defined indices to access allocated cache buffer, maps from block iter vars.
+        consumer_blocks: Optional[List[Union[BlockRV, str]]]
+            An optional list of consumers that should read directly from the cache.
+            If not specified, all consumers will read from the original buffer.
+
+        Returns
+        -------
+        cached_block : BlockRV
+            The block of the cache stage
+
+        Examples
+        --------
+        Before reindex_cache_write, in TensorIR, the IR is:
+
+        .. code-block:: python
+
+            @T.prim_func
+            def before_reindex_cache_write(a: T.handle, b: T.handle) -> None:
+                A = T.match_buffer(a, (128, 128))
+                B = T.match_buffer(b, (128, 128))
+                for i, j in T.grid(128, 128):
+                    with T.block("B"):
+                        vi, vj = T.axis.remap("SS", [i, j])
+                        B[vi, vj] = A[vi, vj] * 2.0
+
+        Create the schedule and reindex_cache_write:
+
+        .. code-block:: python
+
+            sch = tir.Schedule(before_cache_write)
+            block_b = sch.get_block("B")
+            sch.reindex_cache_write(block_b, 0, "local", lambda vi, vj: (vi // 2, vi % 2, vj))
+            print(sch.mod["main"].script())
+
+        After applying reindex_cache_write, the IR becomes:
+
+        .. code-block:: python
+
+            @T.prim_func
+            def after_cache_write(a: T.handle, b: T.handle) -> None:
+                A = T.match_buffer(a, (128, 128))
+                B = T.match_buffer(b, (64, 2, 128))
+                B_local = T.alloc_buffer((128, 128), scope="local")
+                for i, j in T.grid(128, 128):
+                    with T.block("A_local"):
+                        vi, vj = T.axis.remap("SS", [i, j])
+                        B_local[vi % 2, vi // 2, vj] = A[vi, vj] * 2.0
+                for i, j in T.grid(128, 128):
+                    with T.block("B"):
+                        vi, vj = T.axis.remap("SS", [i, j])
+                        B[vi, vj] = B_local[vi % 2, vi // 2, vj]
+
+        See Also
+        --------
+        reindex_cache_read
+        transform_block_layout
+        transform_layout
+        cache_write
+        reindex
+        """
+        # Convert any string block names into Block RVs.
+        block = self._normalize_block_arg(block)
+
+        if callable(index_map):
+            index_map = IndexMap.from_func(index_map)
+        return _ffi_api.ScheduleReindexCacheWrite(  # type: ignore # pylint: disable=no-member
+            self, block, write_buffer_index, storage_scope, index_map
         )
 
     @type_checked
@@ -1226,7 +1431,7 @@ class Schedule(Object):
         .. code-block:: python
 
             @T.prim_func
-            def before_cache_inplace(data_io: T.Buffer[(64), "int32"]):
+            def before_cache_inplace(data_io: T.Buffer((64), "int32")):
                 for i0 in T.serial(1):
                     with T.block("A"):
                         T.reads(data_io[:64])
@@ -1247,7 +1452,7 @@ class Schedule(Object):
         .. code-block:: python
 
             @T.prim_func
-            def cache_inplace(data_io: T.Buffer[64, "int32"]) -> None:
+            def cache_inplace(data_io: T.Buffer(64, "int32")) -> None:
                 data_io_local = T.alloc_buffer([64], dtype="int32", scope="local")
                 for i0 in T.serial(1):
                     for ax0 in T.serial(64):
@@ -1276,6 +1481,95 @@ class Schedule(Object):
             )
         return _ffi_api.ScheduleCacheInplace(  # type: ignore # pylint: disable=no-member
             self, block, read_buffer_index, storage_scope
+        )
+
+    @type_checked
+    def cache_index(
+        self,
+        block: Union[BlockRV, str],
+        storage_scope: str,
+        cse_thresh: int = 0,
+    ) -> List[BlockRV]:
+        """Create a block to cache precomputed index for later use.
+        if there is no index computation, keep unchanged.
+
+        Parameters
+        ----------
+        block : Union[BlockRV, str]
+            The target block operates on the target buffer.
+
+        storage_scope: str
+            The storage scope of cached block.
+
+        cse_thresh: int
+            The repeat threshold that determines a common sub expr,
+            default 0 means cache all index computation.
+
+
+        Returns
+        -------
+        cached_blocks : List[BlockRV]
+            The blocks of the stage writing the cache buffers
+
+        Examples
+        --------
+        Before cache_inplace, in TensorIR, the IR is:
+
+        .. code-block:: python
+
+            @T.prim_func
+            def resize(a: T.handle, b: T.handle) -> None:
+                A = T.match_buffer(a, (1, 3, 40, 40))
+                B = T.match_buffer(b, (1, 3, 80, 80))
+                for i0, i1, i2, i3 in T.grid(1, 3, 80, 80):
+                    with T.block("A"):
+                        n, c, vi, vj = T.axis.remap("SSSS", [i0, i1, i2, i3])
+                        B[n, c, vi, vj] = A[n, c, vi//4 + vj//4, vj//2]
+
+        Create the schedule and cache_index:
+
+        .. code-block:: python
+
+            sch = tir.Schedule(resize)
+            block_a = sch.get_block("A")
+            sch.cache_index(block_a, "global", 1)
+            print(sch.mod["main"].script())
+
+        After applying cache_index, the IR becomes:
+
+        .. code-block:: python
+
+            @T.prim_func
+            def resize_cache_index(
+                A: T.Buffer((1, 3, 40, 40), "float32"), B: T.Buffer((1, 3, 80, 80), "float32")
+            ) -> None:
+                index_var_0 = T.alloc_buffer([80, 80], dtype="int32", strides=[1])
+                index_var_1 = T.alloc_buffer([80], dtype="int32", strides=[1])
+                for ax0, ax1 in T.grid(80, 80):
+                    with T.block("index_0"):
+                        v0 = T.axis.spatial(80, ax0)
+                        v1 = T.axis.spatial(80, ax1)
+                        T.reads()
+                        T.writes(index_var_0[v0, v1])
+                        index_var_0[v0, v1] = v0 // 4 + v1 // 4
+                for ax0 in T.serial(80):
+                    with T.block("index_1"):
+                        v0 = T.axis.spatial(80, ax0)
+                        T.reads()
+                        T.writes(index_var_1[v0])
+                        index_var_1[v0] = v0 // 2
+                for i0, i1, i2, i3 in T.grid(1, 3, 80, 80):
+                    with T.block("A"):
+                        n, c, vi, vj = T.axis.remap("SSSS", [i0, i1, i2, i3])
+                        T.reads(A[n, c, vi // 4 + vj // 4, vj // 2])
+                        T.writes(B[n, c, vi, vj])
+                        B[n, c, vi, vj] = A[n, c, index_var_0[vi, vj], index_var_1[vj]]
+
+        """
+        block = self._normalize_block_arg(block)
+
+        return _ffi_api.ScheduleCacheIndex(  # type: ignore # pylint: disable=no-member
+            self, block, storage_scope, cse_thresh
         )
 
     @type_checked
@@ -1322,21 +1616,21 @@ class Schedule(Object):
         Examples
         --------
 
-        Before transform_layout, in TensorIR, the IR is:
+        Before reindex, in TensorIR, the IR is:
 
         .. code-block:: python
 
             @T.prim_func
             def before_reindex(
-                A: T.Buffer[(128, 128), "float32"],
-                B: T.Buffer[(128, 128), "float32"]
+                A: T.Buffer((128, 128), "float32"),
+                B: T.Buffer((128, 128), "float32")
             ) -> None:
                 for i, j in T.grid(128, 128):
                     with T.block("B"):
                         vi, vj = T.axis.remap("SS", [i, j])
                         B[vi, vj] = A[vj, vi] * 2.0
 
-        Create the schedule and do transform_layout:
+        Create the schedule and do reindex:
 
         .. code-block:: python
 
@@ -1350,8 +1644,8 @@ class Schedule(Object):
 
             @T.prim_func
             def after_reindex(
-                A: T.Buffer[(128, 128), "float32"],
-                B: T.Buffer[(128, 128), "float32"]
+                A: T.Buffer((128, 128), "float32"),
+                B: T.Buffer((128, 128), "float32")
             ) -> None:
                 A_reindex = T.alloc_buffer((128, 128), "float32")
                 for i, j in T.grid(128, 128):
@@ -1746,7 +2040,7 @@ class Schedule(Object):
 
         .. code-block:: python
 
-            @tvm.script.tir
+            @T.prim_func
             def before_decompose(a: ty.handle, c: ty.handle) -> None:
                 A = tir.match_buffer(a, [128, 128])
                 B = tir.match_buffer(b, [128, 128])
@@ -1765,13 +2059,13 @@ class Schedule(Object):
             C = sch.get_block("C")
             i, j, k = sch.get_loops(C)
             sch.decompose_reduction(C, i)
-            print(tvm.script.asscript(sch.mod["main"]))
+            print(sch.mod["main"].script())
 
         After applying decompose-reduction, the IR becomes:
 
         .. code-block:: python
 
-            @tvm.script.tir
+            @T.prim_func
             def after_decompose(a: ty.handle, c: ty.handle) -> None:
                 A = tir.match_buffer(a, [128, 128])
                 B = tir.match_buffer(b, [128, 128])
@@ -1789,7 +2083,7 @@ class Schedule(Object):
         return _ffi_api.ScheduleDecomposeReduction(self, block, loop)  # type: ignore # pylint: disable=no-member
 
     @type_checked
-    def rfactor(self, loop: LoopRV, factor_axis: int) -> LoopRV:
+    def rfactor(self, loop: LoopRV, factor_axis: int) -> BlockRV:
         """Factorize an associative reduction block by the specified loop.
 
         An associative reduction cannot be parallelized directly,
@@ -2048,7 +2342,7 @@ class Schedule(Object):
 
             @T.prim_func
             def before_set_scope(
-                A: T.Buffer[(128, 128), "float32"], C: T.Buffer[(128, 128), "float32"]
+                A: T.Buffer((128, 128), "float32"), C: T.Buffer((128, 128), "float32")
             ) -> None:
                 B = T.alloc_buffer((128, 128), dtype="float32")
 
@@ -2075,7 +2369,7 @@ class Schedule(Object):
 
             @T.prim_func
             def after_set_scope(
-                A: T.Buffer[(128, 128), "float32"], C: T.Buffer[(128, 128), "float32"]
+                A: T.Buffer((128, 128), "float32"), C: T.Buffer((128, 128), "float32")
             ) -> None:
                 B_shared = T.alloc_buffer([128, 128], dtype="float32", scope="shared")
 
@@ -2100,13 +2394,15 @@ class Schedule(Object):
     ########## Schedule: Blockize & Tensorize ##########
 
     @type_checked
-    def blockize(self, loop: LoopRV) -> BlockRV:
+    def blockize(self, loop: LoopRV, preserve_unit_iters: bool = True) -> BlockRV:
         """Convert the subtree rooted at a specific loop into a block.
 
         Parameters
         ----------
         loop : LoopRV
             The root of the subtree.
+        preserve_unit_iters : bool
+            Whether or not to preserve unit iterators in block bindings
 
         Returns
         -------
@@ -2122,8 +2418,8 @@ class Schedule(Object):
 
             @T.prim_func
             def before_blockize(
-                A: T.Buffer[(128, 128), "float32"],
-                B: T.Buffer[(128, 128), "float32"]
+                A: T.Buffer((128, 128), "float32"),
+                B: T.Buffer((128, 128), "float32")
             ) -> None:
                 for i_0, j_0, i_1, j_1 in T.grid(8, 8, 16, 16):
                     with T.block("B"):
@@ -2149,8 +2445,8 @@ class Schedule(Object):
 
             @T.prim_func
             def after_blockize(
-                A: T.Buffer[(128, 128), "float32"],
-                B: T.Buffer[(128, 128), "float32"]
+                A: T.Buffer((128, 128), "float32"),
+                B: T.Buffer((128, 128), "float32")
             )-> None:
                 for i_0, j_0 in T.grid(8, 8):
                     with T.block("B_o"):
@@ -2171,10 +2467,15 @@ class Schedule(Object):
         block are divisible by the subspace represented by the loops starting at the given loop.
         """
 
-        return _ffi_api.ScheduleBlockize(self, loop)  # type: ignore # pylint: disable=no-member
+        return _ffi_api.ScheduleBlockize(self, loop, preserve_unit_iters)  # type: ignore # pylint: disable=no-member
 
     @type_checked
-    def tensorize(self, block_or_loop: Union[BlockRV, LoopRV], tensor_intrin: str) -> None:
+    def tensorize(
+        self,
+        block_or_loop: Union[BlockRV, LoopRV],
+        tensor_intrin: str,
+        preserve_unit_iters: bool = True,
+    ) -> None:
         """Tensorize the computation enclosed by loop with the tensor intrinsic.
 
         Parameters
@@ -2183,6 +2484,8 @@ class Schedule(Object):
             The loop to be tensorized.
         tensor_intrin : str
             The tensor intrin or the name of the tensor intrin.
+        preserve_unit_iters : bool
+            Whether or not to preserve unit iterators in block bindings
 
         Examples
         --------
@@ -2193,9 +2496,9 @@ class Schedule(Object):
 
             @T.prim_func
             def before_tensorize(
-                A: T.Buffer[(128, 128), "float32"],
-                B: T.Buffer[(128, 128), "float32"],
-                C: T.Buffer[(128, 128), "float32"],
+                A: T.Buffer((128, 128), "float32"),
+                B: T.Buffer((128, 128), "float32"),
+                C: T.Buffer((128, 128), "float32"),
             ) -> None:
                 # body
                 # with T.block("root")
@@ -2268,9 +2571,9 @@ class Schedule(Object):
 
             @T.prim_func
             def after_tensorize(
-                A: T.Buffer[(128, 128), "float32"],
-                B: T.Buffer[(128, 128), "float32"],
-                C: T.Buffer[(128, 128), "float32"],
+                A: T.Buffer((128, 128), "float32"),
+                B: T.Buffer((128, 128), "float32"),
+                C: T.Buffer((128, 128), "float32"),
             ) -> None:
                 # body
                 # with T.block("root")
@@ -2316,7 +2619,7 @@ class Schedule(Object):
                         )
         """
         _ffi_api.ScheduleTensorize(  # type: ignore # pylint: disable=no-member
-            self, block_or_loop, tensor_intrin
+            self, block_or_loop, tensor_intrin, preserve_unit_iters
         )
 
     ########## Schedule: Annotation ##########
@@ -2463,7 +2766,6 @@ class Schedule(Object):
         buffer: Union[Tuple[str, int], int, str, Buffer],
         required_buffer_type=None,
     ) -> Tuple[str, int, Buffer]:
-
         block_obj: Block = self.get(block)
         block_name = block_obj.name_hint
 
@@ -2533,6 +2835,8 @@ class Schedule(Object):
         buffer: Union[Tuple[str, int], str, Buffer],
         index_map: Union[IndexMap, Callable],
         pad_value: Optional[Union[int, float, PrimExpr, IndexMap, Callable]] = None,
+        *,
+        assume_injective_transform: bool = False,
     ) -> None:
         """Apply a transformation represented by IndexMap to buffer
 
@@ -2598,6 +2902,13 @@ class Schedule(Object):
             If an IndexMap or Callable, the transformation is the
             value to be present in the padding in terms of the
             transformed index.
+
+        assume_injective_transform : bool
+
+            If set to true, the schedule  primitive will assume the index_map is injective and skip
+            checking overlapping of the mapped indices. This can be useful for complicated index_map
+            that the analysis does not cover. It is the callers' responsibility to ensure the
+            index map is injective, otherwise, the correctness of the schedule is not guaranteed.
 
         Examples
         --------
@@ -2665,9 +2976,9 @@ class Schedule(Object):
             # buffer's type.  If the default `tvm.runtime.convert`
             # behavior is applied, these would be converted to
             # int32/float32, which may not match the buffer's type.
-            if isinstance(pad_value, int):
+            if "int" in buffer_obj.dtype and isinstance(pad_value, int):
                 pad_value = IntImm(buffer_obj.dtype, pad_value)
-            elif isinstance(pad_value, float):
+            elif "float" in buffer_obj.dtype and isinstance(pad_value, float):
                 pad_value = FloatImm(buffer_obj.dtype, pad_value)
             pad_value = IndexMap.from_func(
                 lambda *indices: pad_value, ndim=len(index_map.final_indices)
@@ -2675,7 +2986,13 @@ class Schedule(Object):
 
         buffer_index_type_enum = 0 if buffer_index_type == "read" else 1
         _ffi_api.ScheduleTransformLayout(  # type: ignore # pylint: disable=no-member
-            self, block, buffer_index, buffer_index_type_enum, index_map, pad_value
+            self,
+            block,
+            buffer_index,
+            buffer_index_type_enum,
+            index_map,
+            pad_value,
+            assume_injective_transform,
         )
         if axis_separators:
             _ffi_api.ScheduleSetAxisSeparator(  # type: ignore # pylint: disable=no-member
@@ -2707,8 +3024,8 @@ class Schedule(Object):
 
             @T.prim_func
             def before_transform_block_layout(
-                A: T.Buffer[(16, 16), "float32"],
-                B: T.Buffer[(16, 16), "float32"]
+                A: T.Buffer((16, 16), "float32"),
+                B: T.Buffer((16, 16), "float32")
             ) -> None:
                 for i, j in T.grid(16, 16):
                     with T.block("B"):
@@ -2729,8 +3046,8 @@ class Schedule(Object):
 
             @T.prim_func
             def after_transform_block_layout(
-                A: T.Buffer[(16, 16), "float32"],
-                B: T.Buffer[(16, 16), "float32"]
+                A: T.Buffer((16, 16), "float32"),
+                B: T.Buffer((16, 16), "float32")
             ) -> None:
                 for i in range(256):
                     with T.block("B"):
@@ -2791,7 +3108,7 @@ class Schedule(Object):
 
             @T.prim_func
             def before_set_axis_separator(
-                A: T.Buffer[(128, 128), "float32"], C: T.Buffer[(128, 128), "float32"]
+                A: T.Buffer((128, 128), "float32"), C: T.Buffer((128, 128), "float32")
             ) -> None:
                 B = T.alloc_buffer((128, 128), dtype="float32")
 
@@ -2819,7 +3136,7 @@ class Schedule(Object):
 
             @T.prim_func
             def after_set_axis_separators(
-                A: T.Buffer[(128, 128), "float32"], C: T.Buffer[(128, 128), "float32"]
+                A: T.Buffer((128, 128), "float32"), C: T.Buffer((128, 128), "float32")
             ) -> None:
                 B = T.alloc_buffer([128, 128], dtype="float32", axis_separators=[1])
 
@@ -2880,7 +3197,7 @@ class Schedule(Object):
         .. code-block:: python
 
             @T.prim_func
-            def before_decompose(x: T.Buffer[128, "int32"], y: T.Buffer[140, "int32"]):
+            def before_decompose(x: T.Buffer(128, "int32"), y: T.Buffer(140, "int32")):
                 for i in range(140):
                     with T.block("block"):
                         vi = T.axis.remap("S", [i])
@@ -2900,7 +3217,7 @@ class Schedule(Object):
         .. code-block:: python
 
             @T.prim_func
-            def after_decompose(x: T.Buffer[128, "int32"], y: T.Buffer[140, "int32"]):
+            def after_decompose(x: T.Buffer(128, "int32"), y: T.Buffer(140, "int32")):
                 for i in T.serial(140):
                     with T.block("block_pad_const"):
                         vi = T.axis.spatial(140, i)
@@ -2955,9 +3272,9 @@ class Schedule(Object):
 
             @T.prim_func
             def before_pad_einsum(
-                A: T.Buffer[(128, 127), "float32"],
-                B: T.Buffer[(127, 127), "float32"],
-                C: T.Buffer[(128, 127), "float32"],
+                A: T.Buffer((128, 127), "float32"),
+                B: T.Buffer((127, 127), "float32"),
+                C: T.Buffer((128, 127), "float32"),
             ) -> None:
                 A_shared = T.alloc_buffer((128, 127), "float32", scope="shared")
                 B_shared = T.alloc_buffer((127, 127), "float32", scope="shared")
@@ -2996,9 +3313,9 @@ class Schedule(Object):
 
             @T.prim_func
             def after_pad_einsum(
-                A: T.Buffer[(128, 127), "float32"],
-                B: T.Buffer[(127, 127), "float32"],
-                C: T.Buffer[(128, 127), "float32"],
+                A: T.Buffer((128, 127), "float32"),
+                B: T.Buffer((127, 127), "float32"),
+                C: T.Buffer((128, 127), "float32"),
             ) -> None:
                 A_shared_padded = T.alloc_buffer([128, 128], dtype="float32", scope="shared")
                 B_shared_padded = T.alloc_buffer([128, 128], dtype="float32", scope="shared")
@@ -3041,6 +3358,114 @@ class Schedule(Object):
         return _ffi_api.SchedulePadEinsum(  # type: ignore # pylint: disable=no-member
             self, block, padding
         )
+
+    ######## Schedule: Buffer transformation ########
+
+    @type_checked
+    def rolling_buffer(
+        self,
+        block: Union[BlockRV, str],
+        write_buffer_index: int,
+    ) -> None:
+        """Compute the target buffer via rolling buffering, select the outermost rollable
+        axis with a positive bound overlap that appears in the block's ancestor loops
+        as `rolling axis`, fold and circularize the buffer along the rolling dimension,
+        append block predicate to avoid recomputing overlapping elements. It requires:
+
+        1) The block is not an output block and has only RAW dependencies.
+
+        2) The buffer to be an intermediate buffer defined via `alloc_buffer`.
+
+        3) The LCA of the producer and consumer of the buffer is a for loop, typically,
+        the producer and consumer of the buffer are cascaded through compute_at.
+
+        4) The access region of the buffer has at least one dimension that contains
+        a positive bound overlap.
+
+        Parameters
+        ----------
+        block : Union[BlockRV, str]
+            The producer block of the buffer.
+        write_buffer_index : int
+            The index of the buffer in block's write region.
+
+        Examples
+        --------
+
+        Before rolling_buffer, in TensorIR, the IR is:
+
+        .. code-block:: python
+
+            @T.prim_func
+            def before_rolling_buffer(
+                A: T.Buffer((12, 12), "int8"), C: T.Buffer((8, 8), "int8")
+            ) -> None:
+                # body
+                # with T.block("root")
+                B = T.alloc_buffer([10, 10], dtype="int8")
+                for i0, i1 in T.grid(2, 2):
+                    for ax0, ax1, ax2, ax3 in T.grid(6, 6, 3, 3):
+                        with T.block("B"):
+                            ax0_1 = T.axis.spatial(10, i0 * 4 + ax0)
+                            ax1_1 = T.axis.spatial(10, i1 * 4 + ax1)
+                            rv0, rv1 = T.axis.remap("RR", [ax2, ax3])
+                            B[ax0_1, ax1_1] = T.max(
+                                B[ax0_1, ax1_1], A[ax0_1 + rv0, ax1_1 + rv1]
+                            )
+                    for ax0, ax1, ax2, ax3 in T.grid(4, 4, 3, 3):
+                        with T.block("C"):
+                            ax0_1 = T.axis.spatial(8, i0 * 4 + ax0)
+                            ax1_1 = T.axis.spatial(8, i1 * 4 + ax1)
+                            rv0, rv1 = T.axis.remap("RR", [ax2, ax3])
+                            C[ax0_1, ax1_1] = T.max(
+                                C[ax0_1, ax1_1], B[ax0_1 + rv0, ax1_1 + rv1]
+                            )
+
+        Create the schedule and do rolling_buffer:
+
+        .. code-block:: python
+
+            sch = tir.Schedule(before_rolling_buffer)
+            sch.rolling_buffer(sch.get_block("B"), write_buffer_index=0)
+            print(sch.mod["main"].script())
+
+        After applying rolling_buffer, the IR becomes:
+
+        .. code-block:: python
+
+            @T.prim_func
+            def after_rolling_buffer(
+                A: T.Buffer((12, 12), "int8"),
+                C: T.Buffer((8, 8), "int8")
+            ) -> None:
+                # body
+                # with T.block("root")
+                B = T.alloc_buffer([6, 10], dtype="int8")
+                for i0, i1 in T.grid(2, 2):
+                    for ax0, ax1, ax2, ax3 in T.grid(6, 6, 3, 3):
+                        with T.block("B"):
+                            T.where((i0 < 1 or 2 <= ax0) and (i1 < 1 or 2 <= ax1))
+                            ax0_1 = T.axis.spatial(10, i0 * 4 + ax0)
+                            ax1_1 = T.axis.spatial(10, i1 * 4 + ax1)
+                            rv0, rv1 = T.axis.remap("RR", [ax2, ax3])
+                            B[ax0_1 % 6, ax1_1] = T.max(
+                                B[ax0_1 % 6, ax1_1], A[ax0_1 + rv0, ax1_1 + rv1]
+                            )
+                    for ax0, ax1, ax2, ax3 in T.grid(4, 4, 3, 3):
+                        with T.block("C"):
+                            ax0_1 = T.axis.spatial(8, i0 * 4 + ax0)
+                            ax1_1 = T.axis.spatial(8, i1 * 4 + ax1)
+                            rv0, rv1 = T.axis.remap("RR", [ax2, ax3])
+                            C[ax0_1, ax1_1] = T.max(
+                                C[ax0_1, ax1_1], B[ax0_1 % 6 + rv0, ax1_1 + rv1]
+                            )
+
+        Note
+        ----
+        The region_cover property of the consumer block of the target buffer will become false.
+        """
+        block = self._normalize_block_arg(block)
+        return _ffi_api.ScheduleRollingBuffer(self, block, write_buffer_index)  # type: ignore # pylint: disable=no-member
 
     ########## Schedule: Misc ##########
 

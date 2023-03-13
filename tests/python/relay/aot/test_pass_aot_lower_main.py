@@ -17,11 +17,11 @@
 # pylint: disable=line-too-long,missing-class-docstring,missing-module-docstring,missing-function-docstring,no-self-argument,unused-argument,invalid-name
 import numpy as np
 import pytest
-
 import tvm
 import tvm.testing
-from tvm.script import tir as T
+from tvm.ir import assert_structural_equal
 from tvm.relay.backend.aot import AOTLowerMain, CallType
+from tvm.script import tir as T
 
 
 def _make_const(dtype, shape):
@@ -48,11 +48,11 @@ def _assert_lowered_main(mod, main_func, call_type, print_script=False):
     if print_script:
         print(mod["__tvm_main__"].script())
 
-    assert mod["__tvm_main__"].script() == main_func.script()
+    assert_structural_equal(mod["__tvm_main__"], main_func)
 
 
 def test_single_call_cpacked():
-    mod = tvm.parser.parse(
+    mod = tvm.relay.parse(
         """
 #[version = "0.0.5"]
 def @test_fused_add(%x: Tensor[(5, 7), float32]) { %x }
@@ -68,7 +68,7 @@ def @main(%a: Tensor[(5, 7), float32]) -> Tensor[(5, 7), float32] {
     @T.prim_func
     def func(a: T.handle, output: T.handle) -> None:
         # function attr dict
-        T.func_attr({"global_symbol": "test_mod___tvm_main__", "runner_function": True, "target": T.target({"kind":"llvm", "tag":"", "keys":["cpu"]}), "input_vars": [a], "output_vars": [output]})
+        T.func_attr({"global_symbol": "test_mod___tvm_main__", "runner_function": True, "target": T.target({"kind":"llvm", "tag":"", "keys":["cpu"]}), "input_vars": [a], "output_vars": [output], "devices": []})
         a_buffer = T.match_buffer(a, [5, 7], dtype="float32", align=16)
         output_buffer = T.match_buffer(output, [5, 7], dtype="float32", align=16)
         # body
@@ -79,7 +79,7 @@ def @main(%a: Tensor[(5, 7), float32]) -> Tensor[(5, 7), float32] {
 
 
 def test_single_call_packed():
-    mod = tvm.parser.parse(
+    mod = tvm.relay.parse(
         """
 #[version = "0.0.5"]
 def @test_fused_add(%x: Tensor[(5, 7), float32]) { %x }
@@ -95,7 +95,7 @@ def @main(%a: Tensor[(5, 7), float32]) -> Tensor[(5, 7), float32] {
     @T.prim_func
     def func(a: T.handle, output: T.handle) -> None:
         # function attr dict
-        T.func_attr({"global_symbol": "test_mod___tvm_main__", "runner_function": True, "target": T.target({"kind":"llvm", "tag":"", "keys":["cpu"]}), "input_vars": [a], "output_vars": [output]})
+        T.func_attr({"global_symbol": "test_mod___tvm_main__", "runner_function": True, "target": T.target({"kind":"llvm", "tag":"", "keys":["cpu"]}), "input_vars": [a], "output_vars": [output], "devices": []})
         a_buffer = T.match_buffer(a, [5, 7], dtype="float32", align=16)
         output_buffer = T.match_buffer(output, [5, 7], dtype="float32", align=16)
         # body
@@ -106,7 +106,7 @@ def @main(%a: Tensor[(5, 7), float32]) -> Tensor[(5, 7), float32] {
 
 
 def test_single_call_unpacked():
-    mod = tvm.parser.parse(
+    mod = tvm.relay.parse(
         """
 #[version = "0.0.5"]
 def @test_fused_add(%x: Tensor[(5, 7), float32]) { %x }
@@ -122,7 +122,7 @@ def @main(%a: Tensor[(5, 7), float32]) -> Tensor[(5, 7), float32] {
     @T.prim_func
     def func(a: T.handle, output: T.handle) -> None:
         # function attr dict
-        T.func_attr({"global_symbol": "test_mod___tvm_main__", "runner_function": True, "target": T.target({"kind":"llvm", "tag":"", "keys":["cpu"]}), "input_vars": [a], "output_vars": [output]})
+        T.func_attr({"global_symbol": "test_mod___tvm_main__", "runner_function": True, "target": T.target({"kind":"llvm", "tag":"", "keys":["cpu"]}), "input_vars": [a], "output_vars": [output], "devices": []})
         a_buffer = T.match_buffer(a, [5, 7], dtype="float32", align=16)
         output_buffer = T.match_buffer(output, [5, 7], dtype="float32", align=16)
         # body
@@ -133,7 +133,7 @@ def @main(%a: Tensor[(5, 7), float32]) -> Tensor[(5, 7), float32] {
 
 
 def test_constant():
-    mod = tvm.parser.parse(
+    mod = tvm.relay.parse(
         """
 #[version = "0.0.5"]
 def @test_fused_add(%x: Tensor[(5, 7), float32], %y: Tensor[(5, 7), float32]) { %x }
@@ -150,7 +150,7 @@ def @main(%a: Tensor[(5, 7), float32]) -> Tensor[(5, 7), float32] {
     @T.prim_func
     def func(a: T.handle, output: T.handle) -> None:
         # function attr dict
-        T.func_attr({"runner_function": True, "target": T.target({"kind":"llvm", "tag":"", "keys":["cpu"]}), "global_symbol": "test_mod___tvm_main__", "input_vars": [a], "output_vars": [output]})
+        T.func_attr({"runner_function": True, "target": T.target({"kind":"llvm", "tag":"", "keys":["cpu"]}), "global_symbol": "test_mod___tvm_main__", "input_vars": [a], "output_vars": [output], "devices": []})
         a_buffer = T.match_buffer(a, [5, 7], dtype="float32", align=16)
         output_buffer = T.match_buffer(output, [5, 7], dtype="float32", align=16)
         # body
@@ -164,7 +164,7 @@ def @main(%a: Tensor[(5, 7), float32]) -> Tensor[(5, 7), float32] {
 # TODO(@mbaret) There seems to be a TVMScript round-trip bug causing this to fail
 @pytest.mark.xfail()
 def test_copy_to_output():
-    mod = tvm.parser.parse(
+    mod = tvm.relay.parse(
         """
 #[version = "0.0.5"]
 def @main(%a: Tensor[(5, 7), float32]) -> Tensor[(5, 7), float32] {
@@ -177,24 +177,24 @@ def @main(%a: Tensor[(5, 7), float32]) -> Tensor[(5, 7), float32] {
     @T.prim_func
     def func(a: T.handle, output: T.handle) -> None:
         # function attr dict
-        T.func_attr({"global_symbol": "test_mod___tvm_main__", "runner_function": True, "target": T.target({"kind":"llvm", "tag":"", "keys":["cpu"]}), "input_vars": [a], "output_vars": [output]})
-        tmp_read = T.buffer_var("uint8", "")
+        T.func_attr({"global_symbol": "test_mod___tvm_main__", "runner_function": True, "target": T.target({"kind":"llvm", "tag":"", "keys":["cpu"]}), "input_vars": [a], "output_vars": [output], "devices": []})
+        tmp_read = T.handle("uint8", "")
         # buffer definition
-        tmp_read_1 = T.buffer_decl([T.uint64(140)], dtype="uint8", data=tmp_read)
+        tmp_read_1 = T.Buffer([T.uint64(140)], dtype="uint8", data=tmp_read)
         a_buffer = T.match_buffer(a, [5, 7], dtype="float32", align=16)
         output_buffer = T.match_buffer(output, [5, 7], dtype="float32", align=16)
         # body
-        tmp_write: T.Ptr[T.uint8] = output_buffer.data
-        tmp_write_1 = T.buffer_decl([T.uint64(140)], dtype="uint8", data=tmp_write)
+        tmp_write: T.handle("uint8") = output_buffer.data
+        tmp_write_1 = T.Buffer([T.uint64(140)], dtype="uint8", data=tmp_write)
         for i in T.serial(140):
-            tmp_write_1[i] = T.let(tmp_read, a_buffer.data, tmp_read_1[i])
+            tmp_write_1[i] = T.Let(tmp_read_1[i], where={tmp_read : a_buffer.data})
     # fmt: on
 
     _assert_lowered_main(mod, func, CallType.CPacked)
 
 
 def test_two_calls():
-    mod = tvm.parser.parse(
+    mod = tvm.relay.parse(
         """
 #[version = "0.0.5"]
 def @test_fused_add(%x: Tensor[(5, 7), float32]) { %x }
@@ -212,7 +212,7 @@ def @main(%a: Tensor[(5, 7), float32]) -> Tensor[(5, 7), float32] {
     @T.prim_func
     def func(a: T.handle, output: T.handle) -> None:
         # function attr dict
-        T.func_attr({"global_symbol": "test_mod___tvm_main__", "runner_function": True, "target": T.target({"kind":"llvm", "tag":"", "keys":["cpu"]}), "input_vars": [a], "output_vars": [output]})
+        T.func_attr({"global_symbol": "test_mod___tvm_main__", "runner_function": True, "target": T.target({"kind":"llvm", "tag":"", "keys":["cpu"]}), "input_vars": [a], "output_vars": [output], "devices": []})
         a_buffer = T.match_buffer(a, [5, 7], dtype="float32", align=16)
         output_buffer = T.match_buffer(output, [5, 7], dtype="float32", align=16)
         # body
@@ -225,7 +225,7 @@ def @main(%a: Tensor[(5, 7), float32]) -> Tensor[(5, 7), float32] {
 
 
 def test_tuple_output():
-    mod = tvm.parser.parse(
+    mod = tvm.relay.parse(
         """
 #[version = "0.0.5"]
 def @test_fused_add(%x: Tensor[(5, 7), float32]) { (%x, %x) }
@@ -241,7 +241,7 @@ def @main(%a: Tensor[(5, 7), float32]) -> (Tensor[(5, 7), float32], Tensor[(5, 7
     @T.prim_func
     def func(a: T.handle, output0: T.handle, output1: T.handle) -> None:
         # function attr dict
-        T.func_attr({"global_symbol": "test_mod___tvm_main__", "runner_function": True, "target": T.target({"kind":"llvm", "tag":"", "keys":["cpu"]}), "input_vars": [a], "output_vars": [output0, output1]})
+        T.func_attr({"global_symbol": "test_mod___tvm_main__", "runner_function": True, "target": T.target({"kind":"llvm", "tag":"", "keys":["cpu"]}), "input_vars": [a], "output_vars": [output0, output1], "devices": []})
         a_buffer = T.match_buffer(a, [5, 7], dtype="float32", align=16)
         output0_buffer = T.match_buffer(output0, [5, 7], dtype="float32", align=16)
         output1_buffer = T.match_buffer(output1, [5, 7], dtype="float32", align=16)
@@ -253,7 +253,7 @@ def @main(%a: Tensor[(5, 7), float32]) -> (Tensor[(5, 7), float32], Tensor[(5, 7
 
 
 def test_tuple_intermediate():
-    mod = tvm.parser.parse(
+    mod = tvm.relay.parse(
         """
 #[version = "0.0.5"]
 def @test_fused_add_0(%x: Tensor[(5, 7), float32]) -> (Tensor[(5, 7), float32], Tensor[(5, 7), float32]) { (%x, %x) }
@@ -272,7 +272,7 @@ def @main(%a: Tensor[(5, 7), float32]) -> Tensor[(5, 7), float32] {
     @T.prim_func
     def func(a: T.handle, output: T.handle) -> None:
         # function attr dict
-        T.func_attr({"global_symbol": "test_mod___tvm_main__", "runner_function": True, "target": T.target({"kind":"llvm", "tag":"", "keys":["cpu"]}), "input_vars": [a], "output_vars": [output]})
+        T.func_attr({"global_symbol": "test_mod___tvm_main__", "runner_function": True, "target": T.target({"kind":"llvm", "tag":"", "keys":["cpu"]}), "input_vars": [a], "output_vars": [output], "devices": []})
         a_buffer = T.match_buffer(a, [5, 7], dtype="float32", align=16)
         output_buffer = T.match_buffer(output, [5, 7], dtype="float32", align=16)
         # body
@@ -286,7 +286,7 @@ def @main(%a: Tensor[(5, 7), float32]) -> Tensor[(5, 7), float32] {
 
 
 def test_multi_input():
-    mod = tvm.parser.parse(
+    mod = tvm.relay.parse(
         """
 #[version = "0.0.5"]
 def @test_fused_add(%x: Tensor[(5, 7), float32], %y: Tensor[(5, 7), float32]) { %x }
@@ -302,7 +302,7 @@ def @main(%a: Tensor[(5, 7), float32], %b: Tensor[(5, 7), float32]) -> Tensor[(5
     @T.prim_func
     def func(a: T.handle, b: T.handle, output: T.handle) -> None:
         # function attr dict
-        T.func_attr({"global_symbol": "test_mod___tvm_main__", "runner_function": True, "target": T.target({"kind":"llvm", "tag":"", "keys":["cpu"]}), "input_vars": [a, b], "output_vars": [output]})
+        T.func_attr({"global_symbol": "test_mod___tvm_main__", "runner_function": True, "target": T.target({"kind":"llvm", "tag":"", "keys":["cpu"]}), "input_vars": [a, b], "output_vars": [output], "devices": []})
         a_buffer = T.match_buffer(a, [5, 7], dtype="float32", align=16)
         b_buffer = T.match_buffer(b, [5, 7], dtype="float32", align=16)
         output_buffer = T.match_buffer(output, [5, 7], dtype="float32", align=16)
@@ -314,7 +314,7 @@ def @main(%a: Tensor[(5, 7), float32], %b: Tensor[(5, 7), float32]) -> Tensor[(5
 
 
 def test_let_binding():
-    mod = tvm.parser.parse(
+    mod = tvm.relay.parse(
         """
 #[version = "0.0.5"]
 def @test_fused_add(%x: Tensor[(5, 7), float32]) -> Tensor[(5, 7), float32] { %x }
@@ -331,7 +331,7 @@ def @main(%a: Tensor[(5, 7), float32]) -> Tensor[(5, 7), float32] {
     @T.prim_func
     def func(a: T.handle, output: T.handle) -> None:
         # function attr dict
-        T.func_attr({"global_symbol": "test_mod___tvm_main__", "runner_function": True, "target": T.target({"kind":"llvm", "tag":"", "keys":["cpu"]}), "input_vars": [a], "output_vars": [output]})
+        T.func_attr({"global_symbol": "test_mod___tvm_main__", "runner_function": True, "target": T.target({"kind":"llvm", "tag":"", "keys":["cpu"]}), "input_vars": [a], "output_vars": [output], "devices": []})
         a_buffer = T.match_buffer(a, [5, 7], dtype="float32", align=16)
         output_buffer = T.match_buffer(output, [5, 7], dtype="float32", align=16)
         # body
@@ -342,7 +342,7 @@ def @main(%a: Tensor[(5, 7), float32]) -> Tensor[(5, 7), float32] {
 
 
 def test_let_binding_branch():
-    mod = tvm.parser.parse(
+    mod = tvm.relay.parse(
         """
 #[version = "0.0.5"]
 def @test_fused_add_0(%x: Tensor[(5, 7), float32]) -> Tensor[(5, 7), float32] { %x }
@@ -366,7 +366,7 @@ def @main(%a: Tensor[(5, 7), float32]) -> Tensor[(5, 7), float32] {
     @T.prim_func
     def func(a: T.handle, output: T.handle) -> None:
         # function attr dict
-        T.func_attr({"global_symbol": "test_mod___tvm_main__", "runner_function": True, "target": T.target({"kind":"llvm", "tag":"", "keys":["cpu"]}), "input_vars": [a], "output_vars": [output]})
+        T.func_attr({"global_symbol": "test_mod___tvm_main__", "runner_function": True, "target": T.target({"kind":"llvm", "tag":"", "keys":["cpu"]}), "input_vars": [a], "output_vars": [output], "devices": []})
         a_buffer = T.match_buffer(a, [5, 7], dtype="float32", align=16)
         output_buffer = T.match_buffer(output, [5, 7], dtype="float32", align=16)
         # body
@@ -383,7 +383,7 @@ def @main(%a: Tensor[(5, 7), float32]) -> Tensor[(5, 7), float32] {
 
 
 def test_device_hooks():
-    mod = tvm.parser.parse(
+    mod = tvm.relay.parse(
         """
 #[version = "0.0.5"]
 def @test_fused_add(%x: Tensor[(5, 7), float32]) -> Tensor[(5, 7), float32] { %x }
@@ -401,7 +401,7 @@ def @main(%a: Tensor[(5, 7), float32]) -> Tensor[(5, 7), float32] {
     @T.prim_func
     def func(a: T.handle, output: T.handle, device_context_example_target_hook: T.handle) -> None:
         # function attr dict
-        T.func_attr({"global_symbol": "test_mod___tvm_main__", "runner_function": True, "target": T.target({"kind":"llvm", "tag":"", "keys":["cpu"]}), "input_vars": [a], "output_vars": [output]})
+        T.func_attr({"global_symbol": "test_mod___tvm_main__", "runner_function": True, "target": T.target({"kind":"llvm", "tag":"", "keys":["cpu"]}), "input_vars": [a], "output_vars": [output], "devices": ["example_target_hook"]})
         a_buffer = T.match_buffer(a, [5, 7], dtype="float32", align=16)
         output_buffer = T.match_buffer(output, [5, 7], dtype="float32", align=16)
         # body
