@@ -149,6 +149,7 @@ inline ArgConvertCode GetArgConvertCode(DLDataType t) {
 template <int N, typename F>
 inline PackedFunc PackFuncVoidAddr_(F f, const std::vector<ArgConvertCode>& codes) {
   int num_args = static_cast<int>(codes.size());
+  // std::cout << "PackFuncVoidAddr_:" << num_args << std::endl;
   auto ret = [f, codes, num_args](TVMArgs args, TVMRetValue* ret) {
     TempArray<void*, N> addr_(num_args);
     TempArray<ArgUnion32, N> holder_(num_args);

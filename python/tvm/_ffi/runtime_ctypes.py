@@ -472,6 +472,22 @@ class Device(ctypes.Structure):
 
         """
         return self._GetDeviceAttr(self.device_type, self.device_id, 12)
+    
+    def create_raw_context(self):
+        context = ctypes.c_void_p()
+        # print("create_raw_context in runtime_ctypes.py")
+        check_call(_LIB.TVMContextCreate(self.device_type, self.device_id, ctypes.byref(context)))
+        return context
+    
+    def set_raw_context(self, context):
+        check_call(_LIB.TVMSetContext(self.device_type, self.device_id, context))
+
+    def set_device(self):
+        check_call(_LIB.TVMSetDevice(self.device_type, self.device_id))
+
+    def reset_device(self):
+        print("reset_device")
+        check_call(_LIB.TVMResetDevice(self.device_type, self.device_id))
 
     def create_raw_stream(self):
         """Create a new runtime stream at the context.
@@ -495,7 +511,12 @@ class Device(ctypes.Structure):
         stream : TVMStreamHandle
             The stream which should to be released.
         """
+        # print("free_raw_stream in runtime_ctypes.py")
         check_call(_LIB.TVMStreamFree(self.device_type, self.device_id, stream))
+
+    def free_raw_context(self, context):
+        # print("free_raw_context in runtime_ctypes.py")
+        check_call(_LIB.TVMContextFree(self.device_type, self.device_id, context))
 
     def set_raw_stream(self, stream):
         """Set a created stream handle.

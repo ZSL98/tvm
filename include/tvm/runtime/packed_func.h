@@ -1943,6 +1943,7 @@ inline TVMRetValue::operator T() const {
 }
 
 inline PackedFunc Module::GetFunction(const std::string& name, bool query_imports) {
+  // std::cout << "packed func: " << name << std::endl;
   return (*this)->GetFunction(name, query_imports);
 }
 

@@ -904,6 +904,7 @@ PackedFunc WrapTimeEvaluator(PackedFunc pf, Device dev, int number, int repeat, 
         duration_ms = t_nanos / 1e6;
       } while (duration_ms < min_repeat_ms && absolute_zero_times < limit_zero_time_iterations);
 
+      std::cout << "WrapTimeEvaluator4" << std::endl;
       double speed = duration_ms / 1e3 / number;
       os.write(reinterpret_cast<char*>(&speed), sizeof(speed));
 

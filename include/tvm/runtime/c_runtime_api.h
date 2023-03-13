@@ -234,6 +234,7 @@ typedef void* TVMRetValueHandle;
  * can be NULL, which indicates the default one.
  */
 typedef void* TVMStreamHandle;
+typedef void* TVMContextHandle;
 /*! \brief Handle to Object. */
 typedef void* TVMObjectHandle;
 
@@ -521,6 +522,7 @@ TVM_DLL void TVMDLManagedTensorCallDeleter(DLManagedTensor* dltensor);
  * \return 0 when success, nonzero when failure happens
  */
 TVM_DLL int TVMStreamCreate(int device_type, int device_id, TVMStreamHandle* out);
+TVM_DLL int TVMContextCreate(int device_type, int device_id, TVMContextHandle* out);
 
 /*!
  * \brief Free a created stream handle.
@@ -531,7 +533,7 @@ TVM_DLL int TVMStreamCreate(int device_type, int device_id, TVMStreamHandle* out
  * \return 0 when success, nonzero when failure happens
  */
 TVM_DLL int TVMStreamFree(int device_type, int device_id, TVMStreamHandle stream);
-
+TVM_DLL int TVMContextFree(int device_type, int device_id, TVMContextHandle context);
 /*!
  * \brief Set the runtime stream of current thread to be stream.
  *  The subsequent calls to the same device_type
@@ -544,7 +546,9 @@ TVM_DLL int TVMStreamFree(int device_type, int device_id, TVMStreamHandle stream
  * \return 0 when success, nonzero when failure happens
  */
 TVM_DLL int TVMSetStream(int device_type, int device_id, TVMStreamHandle handle);
-
+TVM_DLL int TVMSetContext(int device_type, int device_id, TVMContextHandle handle);
+TVM_DLL int TVMSetDevice(int device_type, int device_id);
+TVM_DLL int TVMResetDevice(int device_type, int device_id);
 /*!
  * \brief Wait until all computations on stream completes.
  *

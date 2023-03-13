@@ -1023,6 +1023,7 @@ void CodeGenCUDA::VisitStmt_(const AllocateNode* op) {
     stream << ' ' << vid << "[];\n";
   } else {
     size_t constant_size = op->ConstantAllocationSize();
+    // std::cout << "constant_size: " << constant_size << std::endl;
     ICHECK_GT(constant_size, 0) << "Can only handle constant size stack allocation for now";
 
     if (scope.find("wmma.") == 0) {

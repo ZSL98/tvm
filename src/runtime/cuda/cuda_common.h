@@ -23,7 +23,7 @@
  */
 #ifndef TVM_RUNTIME_CUDA_CUDA_COMMON_H_
 #define TVM_RUNTIME_CUDA_CUDA_COMMON_H_
-
+#include <cuda.h>
 #include <cuda_runtime.h>
 #include <tvm/runtime/packed_func.h>
 
@@ -54,6 +54,7 @@ namespace runtime {
 /*! \brief Thread local workspace */
 class CUDAThreadEntry {
  public:
+  CUcontext context{nullptr};
   /*! \brief The cuda stream */
   cudaStream_t stream{nullptr};
   /*! \brief thread local pool*/

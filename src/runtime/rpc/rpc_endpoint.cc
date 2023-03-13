@@ -863,6 +863,11 @@ void RPCDevSetDevice(RPCSession* handler, TVMArgs args, TVMRetValue* rv) {
   handler->GetDeviceAPI(dev)->SetDevice(dev);
 }
 
+void RPCDevResetDevice(RPCSession* handler, TVMArgs args, TVMRetValue* rv) {
+  Device dev = args[0];
+  handler->GetDeviceAPI(dev)->ResetDevice(dev);
+}
+
 void RPCDevGetAttr(RPCSession* handler, TVMArgs args, TVMRetValue* rv) {
   Device dev = args[0];
   DeviceAttrKind kind = static_cast<DeviceAttrKind>(args[1].operator int());
@@ -931,16 +936,34 @@ void RPCDevCreateStream(RPCSession* handler, TVMArgs args, TVMRetValue* rv) {
   *rv = data;
 }
 
+void RPCDevCreateContext(RPCSession* handler, TVMArgs args, TVMRetValue* rv) {
+  Device dev = args[0];
+  void* data = handler->GetDeviceAPI(dev)->CreateContext(dev);
+  *rv = data;
+}
+
 void RPCDevFreeStream(RPCSession* handler, TVMArgs args, TVMRetValue* rv) {
   Device dev = args[0];
   TVMStreamHandle stream = args[1];
   handler->GetDeviceAPI(dev)->FreeStream(dev, stream);
 }
 
+void RPCDevFreeContext(RPCSession* handler, TVMArgs args, TVMRetValue* rv) {
+  Device dev = args[0];
+  TVMContextHandle context = args[1];
+  handler->GetDeviceAPI(dev)->FreeContext(dev, context);
+}
+
 void RPCDevSetStream(RPCSession* handler, TVMArgs args, TVMRetValue* rv) {
   Device dev = args[0];
   TVMStreamHandle stream = args[1];
   handler->GetDeviceAPI(dev)->SetStream(dev, stream);
+}
+
+void RPCDevSetContext(RPCSession* handler, TVMArgs args, TVMRetValue* rv) {
+  Device dev = args[0];
+  TVMStreamHandle context = args[1];
+  handler->GetDeviceAPI(dev)->SetContext(dev, context);
 }
 
 void RPCEndpoint::EventHandler::HandleSyscall(RPCCode code) {
@@ -955,6 +978,9 @@ void RPCEndpoint::EventHandler::HandleSyscall(RPCCode code) {
       break;
     case RPCCode::kDevSetDevice:
       SysCallHandler(RPCDevSetDevice);
+      break;
+    case RPCCode::kDevResetDevice:
+      SysCallHandler(RPCDevResetDevice);
       break;
     case RPCCode::kDevGetAttr:
       SysCallHandler(RPCDevGetAttr);
@@ -971,14 +997,23 @@ void RPCEndpoint::EventHandler::HandleSyscall(RPCCode code) {
     case RPCCode::kDevCreateStream:
       SysCallHandler(RPCDevCreateStream);
       break;
+    case RPCCode::kDevCreateContext:
+      SysCallHandler(RPCDevCreateContext);
+      break;
     case RPCCode::kDevFreeStream:
       SysCallHandler(RPCDevFreeStream);
+      break;
+    case RPCCode::kDevFreeContext:
+      SysCallHandler(RPCDevFreeContext);
       break;
     case RPCCode::kDevStreamSync:
       this->HandleSyscallStreamSync();
       break;
     case RPCCode::kDevSetStream:
       SysCallHandler(RPCDevSetStream);
+      break;
+    case RPCCode::kDevSetContext:
+      SysCallHandler(RPCDevSetContext);
       break;
     case RPCCode::kCopyAmongRemote:
       SysCallHandler(RPCCopyAmongRemote);
@@ -1069,6 +1104,7 @@ class RPCClientSession : public RPCSession, public DeviceAPI {
   }
 
   void SetDevice(Device dev) final { endpoint_->SysCallRemote(RPCCode::kDevSetDevice, dev); }
+  void ResetDevice(Device dev) final { endpoint_->SysCallRemote(RPCCode::kDevResetDevice, dev); }
 
   void GetAttr(Device dev, DeviceAttrKind kind, TVMRetValue* rv) final {
     if (dev.device_type == kDLCPU && kind == kExist) {
@@ -1113,8 +1149,16 @@ class RPCClientSession : public RPCSession, public DeviceAPI {
     return endpoint_->SysCallRemote(RPCCode::kDevCreateStream, dev);
   }
 
+  TVMContextHandle CreateContext(Device dev) final {
+    return endpoint_->SysCallRemote(RPCCode::kDevCreateContext, dev);
+  }
+
   void FreeStream(Device dev, TVMStreamHandle stream) final {
     endpoint_->SysCallRemote(RPCCode::kDevFreeStream, dev, stream);
+  }
+
+  void FreeContext(Device dev, TVMContextHandle context) final {
+    endpoint_->SysCallRemote(RPCCode::kDevFreeContext, dev, context);
   }
 
   void StreamSync(Device dev, TVMStreamHandle stream) final {
@@ -1123,6 +1167,10 @@ class RPCClientSession : public RPCSession, public DeviceAPI {
 
   void SetStream(Device dev, TVMStreamHandle stream) final {
     endpoint_->SysCallRemote(RPCCode::kDevSetStream, dev, stream);
+  }
+
+  void SetContext(Device dev, TVMContextHandle context) final {
+    endpoint_->SysCallRemote(RPCCode::kDevSetContext, dev, context);
   }
 
   DeviceAPI* GetDeviceAPI(Device dev, bool allow_missing) final { return this; }
