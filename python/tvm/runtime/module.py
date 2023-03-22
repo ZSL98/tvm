@@ -281,6 +281,7 @@ class Module(object):
         cooldown_interval_ms=0,
         repeats_to_cooldown=1,
         f_preproc="",
+        f_postproc="",
     ):
         """Get an evaluator that measures time cost of running function.
 
@@ -349,6 +350,7 @@ class Module(object):
                 cooldown_interval_ms,
                 repeats_to_cooldown,
                 f_preproc,
+                f_postproc
             )
 
             def evaluator(*args):

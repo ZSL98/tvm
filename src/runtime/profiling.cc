@@ -861,7 +861,7 @@ TVM_REGISTER_GLOBAL("runtime.profiling.ProfileFunction")
 
 PackedFunc WrapTimeEvaluator(PackedFunc pf, Device dev, int number, int repeat, int min_repeat_ms,
                              int limit_zero_time_iterations, int cooldown_interval_ms,
-                             int repeats_to_cooldown, PackedFunc f_preproc) {
+                             int repeats_to_cooldown, PackedFunc f_preproc, PackedFunc f_postproc) {
   ICHECK(pf != nullptr);
 
   if (static_cast<int>(dev.device_type) == static_cast<int>(kDLMicroDev)) {
@@ -872,13 +872,14 @@ PackedFunc WrapTimeEvaluator(PackedFunc pf, Device dev, int number, int repeat, 
 
   auto ftimer = [pf, dev, number, repeat, min_repeat_ms, limit_zero_time_iterations,
                  cooldown_interval_ms, repeats_to_cooldown,
-                 f_preproc](TVMArgs args, TVMRetValue* rv) mutable {
+                 f_preproc, f_postproc](TVMArgs args, TVMRetValue* rv) mutable {
     TVMRetValue temp;
     std::ostringstream os;
     // skip first time call, to activate lazy compilation components.
+    // DeviceAPI::Get(dev)->SetStream(dev, DeviceAPI::Get(dev)->CreateStream(dev));
+    DeviceAPI::Get(dev)->CreateContext(dev, 0, 0);
     pf.CallPacked(args, &temp);
-
-    DeviceAPI::Get(dev)->StreamSync(dev, nullptr);
+    // std::cout << "Successfully launched" << std::endl;
 
     for (int i = 0; i < repeat; ++i) {
       if (f_preproc != nullptr) {
@@ -887,6 +888,7 @@ PackedFunc WrapTimeEvaluator(PackedFunc pf, Device dev, int number, int repeat, 
       double duration_ms = 0.0;
       int absolute_zero_times = 0;
       do {
+        std::cout << "..." << std::endl;
         if (duration_ms > 0.0) {
           const double golden_ratio = 1.618;
           number = static_cast<int>(
@@ -896,6 +898,7 @@ PackedFunc WrapTimeEvaluator(PackedFunc pf, Device dev, int number, int repeat, 
         // start timing
         Timer t = Timer::Start(dev);
         for (int j = 0; j < number; ++j) {
+          // f_postproc.CallPacked(args, &temp);
           pf.CallPacked(args, &temp);
         }
         t->Stop();
@@ -904,8 +907,8 @@ PackedFunc WrapTimeEvaluator(PackedFunc pf, Device dev, int number, int repeat, 
         duration_ms = t_nanos / 1e6;
       } while (duration_ms < min_repeat_ms && absolute_zero_times < limit_zero_time_iterations);
 
-      std::cout << "WrapTimeEvaluator4" << std::endl;
       double speed = duration_ms / 1e3 / number;
+      std::cout << "speed: " << speed << std::endl;
       os.write(reinterpret_cast<char*>(&speed), sizeof(speed));
 
       if (cooldown_interval_ms > 0 && (i % repeats_to_cooldown) == 0) {

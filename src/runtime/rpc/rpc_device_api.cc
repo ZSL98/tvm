@@ -122,10 +122,10 @@ class RPCDeviceAPI final : public DeviceAPI {
     return GetSess(dev)->GetDeviceAPI(remote_dev)->CreateStream(remote_dev);
   }
 
-  TVMStreamHandle CreateContext(Device dev) {
+  TVMStreamHandle CreateContext(Device dev, bool MPS_FLAG, int MPS_affinity) {
     auto remote_dev = RemoveRPCSessionMask(dev);
     // std::cout << "rpc_device_api CreateContext" << std::endl;
-    return GetSess(dev)->GetDeviceAPI(remote_dev)->CreateContext(remote_dev);
+    return GetSess(dev)->GetDeviceAPI(remote_dev)->CreateContext(remote_dev, MPS_FLAG, MPS_affinity);
   }
 
 

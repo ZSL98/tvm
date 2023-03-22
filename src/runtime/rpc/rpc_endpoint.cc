@@ -938,7 +938,9 @@ void RPCDevCreateStream(RPCSession* handler, TVMArgs args, TVMRetValue* rv) {
 
 void RPCDevCreateContext(RPCSession* handler, TVMArgs args, TVMRetValue* rv) {
   Device dev = args[0];
-  void* data = handler->GetDeviceAPI(dev)->CreateContext(dev);
+  bool MPS_FLAG = args[1];
+  int MPS_affinity = args[2];
+  void* data = handler->GetDeviceAPI(dev)->CreateContext(dev, MPS_FLAG, MPS_affinity);
   *rv = data;
 }
 
@@ -1149,7 +1151,7 @@ class RPCClientSession : public RPCSession, public DeviceAPI {
     return endpoint_->SysCallRemote(RPCCode::kDevCreateStream, dev);
   }
 
-  TVMContextHandle CreateContext(Device dev) final {
+  TVMContextHandle CreateContext(Device dev, bool MPS_FLAG, int MPS_affinity) final {
     return endpoint_->SysCallRemote(RPCCode::kDevCreateContext, dev);
   }
 

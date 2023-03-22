@@ -35,7 +35,15 @@ L2Flush* L2Flush::ThreadLocal() { return L2FlushStore::Get(); }
 TVM_REGISTER_GLOBAL("l2_cache_flush_cuda").set_body([](TVMArgs args, TVMRetValue* rv) {
   ICHECK(L2Flush::ThreadLocal() != nullptr) << "L2Flush::ThreadLocal do not exist.";
   cudaStream_t stream = CUDAThreadEntry::ThreadLocal()->stream;
-  L2Flush::ThreadLocal()->Flush(stream);
+  CUcontext context = CUDAThreadEntry::ThreadLocal()->context;
+  L2Flush::ThreadLocal()->Flush(context, stream);
+});
+
+TVM_REGISTER_GLOBAL("resident_kernel").set_body([](TVMArgs args, TVMRetValue* rv) {
+  ICHECK(L2Flush::ThreadLocal() != nullptr) << "L2Flush::ThreadLocal do not exist.";
+  cudaStream_t stream = CUDAThreadEntry::ThreadLocal()->stream;
+  CUcontext context = CUDAThreadEntry::ThreadLocal()->context;
+  L2Flush::ThreadLocal()->resident_kernel(context, stream);
 });
 
 }  // namespace runtime

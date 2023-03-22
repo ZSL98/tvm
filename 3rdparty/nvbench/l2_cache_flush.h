@@ -23,9 +23,15 @@
 #include <cuda.h>
 #include <cuda_runtime.h>
 #include <dmlc/logging.h>
+#include <iostream>
 
 namespace tvm {
 namespace runtime {
+
+const int BLOCK = 128;
+const int COPY_SIZE = (1u << 20);
+const int MEMORY_OFFSET = (1u << 20) * 16;
+const int BENCH_ITER = 10;
 
 #define CUDA_CALL(func)                                       \
   {                                                           \
@@ -44,7 +50,8 @@ class L2Flush {
     }
   }
 
-  void Flush(cudaStream_t stream) {
+  void Flush(CUcontext context, cudaStream_t stream) {
+    cuCtxSetCurrent(context);
     if (!initialized_) {
       // initialize l2_buffer_ and l2_size_
       initialized_ = true;
@@ -56,8 +63,38 @@ class L2Flush {
       }
     }
     if (l2_size_ > 0) {
+      std::cout << "l2 cache flush" << std::endl;
       CUDA_CALL(cudaMemsetAsync(l2_buffer_, 0, l2_size_, stream));
     }
+  }
+
+  void resident_kernel(CUcontext context, cudaStream_t stream) {
+    cuCtxSetCurrent(context);
+
+    size_t size_in_byte = (1lu << 20) * 2048;
+    char *ws;
+    cudaMalloc(&ws, size_in_byte + MEMORY_OFFSET * BENCH_ITER);
+    cudaMemset(ws, 0, size_in_byte + MEMORY_OFFSET * BENCH_ITER);
+    int* worker_num;
+    cudaMallocManaged(&worker_num, sizeof(int));
+
+    cudaStream_t strm;
+    CUDA_CALL(cudaStreamCreate(&strm));
+    CUmodule module;
+    CUfunction func;
+    char *module_file = (char*) "/root/compsche/spatial_codegen/resident_kernel/read_write_kernel.cubin";
+    char *kernel_name = (char*) "_Z21read_write_kernel_PTBPKvPi";
+
+    cuModuleLoad(&module, module_file);
+    cuModuleGetFunction(&func, module, kernel_name);
+
+    void *param[] = { (void*)&ws, (void*)&worker_num };
+    // CUcontext ctx;
+    // cuCtxGetCurrent(&ctx);
+    // std::cout << "current ctx: " << ctx << std::endl;
+    cuLaunchKernel(func, 16*108, 1, 1, BLOCK, 1, 1, 0, strm, param, NULL);
+    // cudaStreamSynchronize(strm);
+    // std::cout << "Resident kernel worker num: " << *worker_num << std::endl;
   }
 
   static L2Flush* ThreadLocal();

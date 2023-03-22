@@ -195,14 +195,31 @@ class CUDADeviceAPI final : public DeviceAPI {
     return static_cast<TVMStreamHandle>(retval);
   }
 
-  TVMContextHandle CreateContext(Device dev) {
+  TVMContextHandle CreateContext(Device dev, bool MPS_FLAG, int MPS_affinity) {
     CUDA_CALL(cudaSetDevice(dev.device_id));
     CUcontext context;
-    CUexecAffinityParam affinity;
-    affinity.type = CU_EXEC_AFFINITY_TYPE_SM_COUNT;
-    affinity.param.smCount.val = 8;
-    CUDA_DRIVER_CALL(cuCtxCreate_v3(&context, &affinity, 1, 0, dev.device_id));
-    std::cout << "cuda_device_api CreateContext" << std::endl;
+
+    if (MPS_FLAG)
+    {
+      CUexecAffinityParam affinity;
+      affinity.type = CU_EXEC_AFFINITY_TYPE_SM_COUNT;
+      affinity.param.smCount.val = MPS_affinity;
+      CUDA_DRIVER_CALL(cuCtxCreate_v3(&context, &affinity, 1, 0, dev.device_id));
+      CUDA_DRIVER_CALL(cuCtxSetCurrent(static_cast<CUcontext>(context)));
+      CUDA_DRIVER_CALL(cuCtxGetExecAffinity(&affinity, CU_EXEC_AFFINITY_TYPE_SM_COUNT));
+      std::cout << "cuda_device_api Set MPS Context: " << affinity.param.smCount.val << std::endl;
+    }
+    else
+    {
+      CUDA_DRIVER_CALL(cuCtxCreate(&context, 0, dev.device_id));
+      std::cout << "cuda_device_api Create Normal Context" << std::endl;
+      CUDAThreadEntry::ThreadLocal()->context = static_cast<CUcontext>(context);
+    }
+
+    cudaStream_t stream;
+    CUDA_CALL(cudaStreamCreate(&stream));
+    CUDAThreadEntry::ThreadLocal()->stream = static_cast<cudaStream_t>(stream);
+    // std::cout << "streamid setstream: " << CUDAThreadEntry::ThreadLocal()->stream << std::endl;
     return static_cast<TVMContextHandle>(context);
   }
 
@@ -234,19 +251,22 @@ class CUDADeviceAPI final : public DeviceAPI {
   void StreamSync(Device dev, TVMStreamHandle stream) final {
     CUDA_CALL(cudaSetDevice(dev.device_id));
     CUDA_CALL(cudaStreamSynchronize(static_cast<cudaStream_t>(stream)));
+    CUDA_CALL(cudaDeviceSynchronize());
   }
 
   void SetStream(Device dev, TVMStreamHandle stream) final {
-    // std::cout << "cuda_device_api setstream" << std::endl;
+    // std::cout << "cuda_device_api setstream device: " << dev.device_id << std::endl;
+    CUDA_CALL(cudaSetDevice(dev.device_id));
     CUDAThreadEntry::ThreadLocal()->stream = static_cast<cudaStream_t>(stream);
     // std::cout << "streamid setstream: " << CUDAThreadEntry::ThreadLocal()->stream << std::endl;
   }
 
   void SetContext(Device dev, TVMContextHandle context) final {
+    CUDA_CALL(cudaSetDevice(dev.device_id));
     CUDA_DRIVER_CALL(cuCtxSetCurrent(static_cast<CUcontext>(context)));
     CUexecAffinityParam affinity;
     CUDA_DRIVER_CALL(cuCtxGetExecAffinity(&affinity, CU_EXEC_AFFINITY_TYPE_SM_COUNT));
-    std::cout << "cuda_device_api SetContext: " << affinity.param.smCount.val << std::endl;
+    // std::cout << "cuda_device_api SetContext: " << affinity.param.smCount.val << std::endl;
     CUDAThreadEntry::ThreadLocal()->context = static_cast<CUcontext>(context);
   }
 
@@ -300,10 +320,9 @@ class CUDATimerNode : public TimerNode {
     CUDA_CALL(cudaSetDevice(0));
     CUcontext context = static_cast<CUcontext>(CUDAThreadEntry::ThreadLocal()->context);
     cuCtxSetCurrent(context);
-    CUexecAffinityParam affinity;
-    cuCtxGetExecAffinity(&affinity, CU_EXEC_AFFINITY_TYPE_SM_COUNT);
+    // CUexecAffinityParam affinity;
+    // cuCtxGetExecAffinity(&affinity, CU_EXEC_AFFINITY_TYPE_SM_COUNT);
     // std::cout << "This timer's context affinity when timer starts: " << affinity.param.smCount.val << std::endl;
-    CUDA_CALL(cudaStreamSynchronize(CUDAThreadEntry::ThreadLocal()->stream));
     // std::cout << "streamid: " << CUDAThreadEntry::ThreadLocal()->stream << std::endl;
     CUDA_CALL(cudaEventRecord(start_, CUDAThreadEntry::ThreadLocal()->stream));
   }
@@ -314,6 +333,7 @@ class CUDATimerNode : public TimerNode {
     CUDA_CALL(cudaEventRecord(stop_, CUDAThreadEntry::ThreadLocal()->stream));
   }
   virtual int64_t SyncAndGetElapsedNanos() {
+    CUDA_CALL(cudaSetDevice(0));
     CUcontext context = static_cast<CUcontext>(CUDAThreadEntry::ThreadLocal()->context);
     cuCtxSetCurrent(context);
     CUDA_CALL(cudaEventSynchronize(stop_));
@@ -322,18 +342,18 @@ class CUDATimerNode : public TimerNode {
     return milliseconds * 1e6;
   }
   virtual ~CUDATimerNode() {
+    CUDA_CALL(cudaSetDevice(0));
     CUcontext context = static_cast<CUcontext>(CUDAThreadEntry::ThreadLocal()->context);
     cuCtxSetCurrent(context);
-    CUDA_CALL(cudaSetDevice(0));
     CUDA_CALL(cudaEventDestroy(start_));
     CUDA_CALL(cudaEventDestroy(stop_));
   }
   CUDATimerNode() {
+    CUDA_CALL(cudaSetDevice(0));
     CUcontext context = static_cast<CUcontext>(CUDAThreadEntry::ThreadLocal()->context);
     cuCtxSetCurrent(context);
-    CUexecAffinityParam affinity;
-    cuCtxGetExecAffinity(&affinity, CU_EXEC_AFFINITY_TYPE_SM_COUNT);
-    CUDA_CALL(cudaSetDevice(0));
+    // CUexecAffinityParam affinity;
+    // cuCtxGetExecAffinity(&affinity, CU_EXEC_AFFINITY_TYPE_SM_COUNT);
     CUDA_CALL(cudaEventCreate(&start_));
     CUDA_CALL(cudaEventCreate(&stop_));
   }

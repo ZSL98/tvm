@@ -145,7 +145,7 @@ class TVM_DLL DeviceAPI {
    * \param dev The device of allocation.
    */
   virtual TVMStreamHandle CreateStream(Device dev);
-  virtual TVMContextHandle CreateContext(Device dev);
+  virtual TVMContextHandle CreateContext(Device dev, bool MPS_FLAG, int MPS_affinity);
   virtual void ResetDevice(Device dev);
   /*!
    * \brief Free a stream of execution

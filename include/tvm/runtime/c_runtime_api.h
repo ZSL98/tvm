@@ -522,7 +522,7 @@ TVM_DLL void TVMDLManagedTensorCallDeleter(DLManagedTensor* dltensor);
  * \return 0 when success, nonzero when failure happens
  */
 TVM_DLL int TVMStreamCreate(int device_type, int device_id, TVMStreamHandle* out);
-TVM_DLL int TVMContextCreate(int device_type, int device_id, TVMContextHandle* out);
+TVM_DLL int TVMContextCreate(int device_type, int device_id, TVMContextHandle* out, bool MPS_FLAG, int MPS_affinity);
 
 /*!
  * \brief Free a created stream handle.

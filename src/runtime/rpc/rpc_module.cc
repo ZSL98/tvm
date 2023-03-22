@@ -372,7 +372,7 @@ TVM_REGISTER_GLOBAL("runtime.RPCTimeEvaluator")
     .set_body_typed([](Optional<Module> opt_mod, std::string name, int device_type, int device_id,
                        int number, int repeat, int min_repeat_ms, int limit_zero_time_iterations,
                        int cooldown_interval_ms, int repeats_to_cooldown,
-                       std::string f_preproc_name) {
+                       std::string f_preproc_name, std::string f_postproc_name) {
       Device dev;
       dev.device_type = static_cast<DLDeviceType>(device_type);
       dev.device_id = device_id;
@@ -380,6 +380,7 @@ TVM_REGISTER_GLOBAL("runtime.RPCTimeEvaluator")
         Module m = opt_mod.value();
         std::string tkey = m->type_key();
         if (tkey == "rpc") {
+          std::cout << "In RPC mode" << std::endl;
           return static_cast<RPCModuleNode*>(m.operator->())
               ->GetTimeEvaluator(name, dev, number, repeat, min_repeat_ms,
                                  limit_zero_time_iterations, cooldown_interval_ms,
@@ -392,11 +393,18 @@ TVM_REGISTER_GLOBAL("runtime.RPCTimeEvaluator")
                 << "Cannot find " << f_preproc_name << " in the global function";
             f_preproc = *pf_preproc;
           }
+          PackedFunc f_postproc;
+          if (!f_postproc_name.empty()) {
+            auto* pf_postproc = runtime::Registry::Get(f_postproc_name);
+            ICHECK(pf_postproc != nullptr)
+                << "Cannot find " << f_postproc_name << " in the global function";
+            f_postproc = *pf_postproc;
+          }
           PackedFunc pf = m.GetFunction(name, true);
           CHECK(pf != nullptr) << "Cannot find " << name << " in the global registry";
           return profiling::WrapTimeEvaluator(pf, dev, number, repeat, min_repeat_ms,
                                               limit_zero_time_iterations, cooldown_interval_ms,
-                                              repeats_to_cooldown, f_preproc);
+                                              repeats_to_cooldown, f_preproc, f_postproc);
         }
       } else {
         auto* pf = runtime::Registry::Get(name);
@@ -408,9 +416,16 @@ TVM_REGISTER_GLOBAL("runtime.RPCTimeEvaluator")
               << "Cannot find " << f_preproc_name << " in the global function";
           f_preproc = *pf_preproc;
         }
+        PackedFunc f_postproc;
+        if (!f_postproc_name.empty()) {
+          auto* pf_postproc = runtime::Registry::Get(f_postproc_name);
+          ICHECK(pf_postproc != nullptr)
+              << "Cannot find " << f_postproc_name << " in the global function";
+          f_postproc = *pf_postproc;
+        }
         return profiling::WrapTimeEvaluator(*pf, dev, number, repeat, min_repeat_ms,
                                             limit_zero_time_iterations, cooldown_interval_ms,
-                                            repeats_to_cooldown, f_preproc);
+                                            repeats_to_cooldown, f_preproc, f_postproc);
       }
     });
 

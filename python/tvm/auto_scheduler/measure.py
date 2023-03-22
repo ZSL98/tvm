@@ -903,7 +903,9 @@ def _timed_eval_func(
         # under the std::function. We could lift the restriction later once we fold
         # the PackedFunc as an object. Currently, we pass function name to work
         # around it.
-        f_prepare = "cache_flush_cpu_non_first_arg" if enable_cpu_cache_flush else ""
+        # f_prepare = "cache_flush_cpu_non_first_arg" if enable_cpu_cache_flush else ""
+        f_prepare = "resident_kernel"
+        f_stop = ""
         time_f = func.time_evaluator(
             func.entry_name,
             dev,
@@ -911,6 +913,7 @@ def _timed_eval_func(
             repeat=repeat,
             min_repeat_ms=min_repeat_ms,
             f_preproc=f_prepare,
+            f_postproc=f_stop
         )
     # pylint: disable=broad-except
     except Exception:
@@ -1048,7 +1051,7 @@ def local_run(
             )
             if isinstance(res, TimeoutError):
                 if verbose >= 1:
-                    print("*T", end="", flush=True)  # Run timeout
+                    print("*T2", end="", flush=True)  # Run timeout
                 res = (
                     (MAX_FLOAT,),
                     MeasureErrorNo.RUN_TIMEOUT,

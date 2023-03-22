@@ -191,7 +191,7 @@ void DeviceAPI::CopyDataFromTo(const void* from, size_t from_offset, void* to, s
 void DeviceAPI::FreeWorkspace(Device dev, void* ptr) { FreeDataSpace(dev, ptr); }
 
 TVMStreamHandle DeviceAPI::CreateStream(Device dev) { return nullptr; }
-TVMContextHandle DeviceAPI::CreateContext(Device dev) { return nullptr; }
+TVMContextHandle DeviceAPI::CreateContext(Device dev, bool MPS_FLAG, int MPS_affinity) { return nullptr; }
 void DeviceAPI::ResetDevice(Device dev) {}
 void DeviceAPI::FreeStream(Device dev, TVMStreamHandle stream) {}
 void DeviceAPI::FreeContext(Device dev, TVMContextHandle context) {}
@@ -555,13 +555,13 @@ int TVMStreamCreate(int device_type, int device_id, TVMStreamHandle* out) {
   API_END();
 }
 
-int TVMContextCreate(int device_type, int device_id, TVMContextHandle* out) {
+int TVMContextCreate(int device_type, int device_id, TVMContextHandle* out, bool MPS_FLAG, int MPS_affinity) {
   API_BEGIN();
   DLDevice dev;
   dev.device_type = static_cast<DLDeviceType>(device_type);
   dev.device_id = device_id;
   // std::cout << "TVMContextCreate in c_runtime_api.cc" << std::endl;
-  *out = DeviceAPIManager::Get(dev)->CreateContext(dev);
+  *out = DeviceAPIManager::Get(dev)->CreateContext(dev, MPS_FLAG, MPS_affinity);
   API_END();
 }
 
