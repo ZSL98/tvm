@@ -28,10 +28,11 @@
 namespace tvm {
 namespace runtime {
 
-const int BLOCK = 128;
-const int COPY_SIZE = (1u << 20);
-const int MEMORY_OFFSET = (1u << 20) * 16;
-const int BENCH_ITER = 10;
+const int BLOCK = 1024;
+const int BENCH_SIZE = (1lu << 26); 
+const int THREAD_STRIDE = (1lu << 16);
+const int BLOCK_STRIDE = (1lu << 8);
+const int BENCH_ITER = 16;
 
 #define CUDA_CALL(func)                                       \
   {                                                           \
@@ -71,30 +72,53 @@ class L2Flush {
   void resident_kernel(CUcontext context, cudaStream_t stream) {
     cuCtxSetCurrent(context);
 
-    size_t size_in_byte = (1lu << 20) * 2048;
+    size_t size_in_byte = (1lu << 30) * 4; //(4GB)
     char *ws;
-    cudaMalloc(&ws, size_in_byte + MEMORY_OFFSET * BENCH_ITER);
-    cudaMemset(ws, 0, size_in_byte + MEMORY_OFFSET * BENCH_ITER);
-    int* worker_num;
-    cudaMallocManaged(&worker_num, sizeof(int));
+    cudaMalloc(&ws, size_in_byte);
+    cudaMemset(ws, 0, size_in_byte);
+
+    char *rs;
+    cudaMalloc(&rs, size_in_byte);
+    cudaMemset(rs, 0, size_in_byte);
+
+    // int* worker_num;
+    // cudaMallocManaged(&worker_num, sizeof(int));
+
+    const int L2_FLUSH_SIZE = (1 << 20) * 128;
+    int *l2_flush;
+    cudaMalloc(&l2_flush, L2_FLUSH_SIZE);
+    cudaMemset(l2_flush, 0, L2_FLUSH_SIZE);
+
+    int* workernum_host = new int;
+    int* workernum_dev;
+    *workernum_host = 0;
+    cudaMalloc(&workernum_dev, sizeof(int));
+    cudaMemcpy(workernum_dev, workernum_host, sizeof(int), cudaMemcpyHostToDevice);
 
     cudaStream_t strm;
     CUDA_CALL(cudaStreamCreate(&strm));
     CUmodule module;
     CUfunction func;
-    char *module_file = (char*) "/root/compsche/spatial_codegen/resident_kernel/read_write_kernel.cubin";
-    char *kernel_name = (char*) "_Z21read_write_kernel_PTBPKvPi";
+    // char *module_file = (char*) "/root/compsche/spatial_codegen/resident_kernel/read_write_kernel.cubin";
+    // char *kernel_name = (char*) "_Z21read_write_kernel_PTBPKvPi";
+    char *module_file = (char*) "/root/compsche/evaluator/interference_evaluate/kernel_test/resident_kernels/resident_kernel.cubin";
+    char *kernel_name = (char*) "resident_kernel_1_T_PTB";
 
     cuModuleLoad(&module, module_file);
     cuModuleGetFunction(&func, module, kernel_name);
 
-    void *param[] = { (void*)&ws, (void*)&worker_num };
+    void *param[] = { (void*)&ws, (void*)&rs, (void*)&workernum_dev };
     // CUcontext ctx;
     // cuCtxGetCurrent(&ctx);
     // std::cout << "current ctx: " << ctx << std::endl;
-    cuLaunchKernel(func, 16*108, 1, 1, BLOCK, 1, 1, 0, strm, param, NULL);
+    cuLaunchKernel(func, 2*108, 1, 1, BLOCK, 1, 1, 0, strm, param, NULL);
     // cudaStreamSynchronize(strm);
     // std::cout << "Resident kernel worker num: " << *worker_num << std::endl;
+    cudaFreeAsync(ws, strm);
+    cudaFreeAsync(rs, strm);
+    cudaFreeAsync(workernum_dev, strm);
+    cudaFreeAsync(l2_flush, strm);
+    // cuModuleUnload(module);
   }
 
   static L2Flush* ThreadLocal();

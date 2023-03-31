@@ -884,11 +884,15 @@ PackedFunc WrapTimeEvaluator(PackedFunc pf, Device dev, int number, int repeat, 
     for (int i = 0; i < repeat; ++i) {
       if (f_preproc != nullptr) {
         f_preproc.CallPacked(args, &temp);
+        // std::cout << "Launch resident kernel" << std::endl;
       }
+      // for (int j = 0; j < 10; ++j) {
+      //   pf.CallPacked(args, &temp);
+      // }
       double duration_ms = 0.0;
       int absolute_zero_times = 0;
       do {
-        std::cout << "..." << std::endl;
+        // std::cout << "..." << std::endl;
         if (duration_ms > 0.0) {
           const double golden_ratio = 1.618;
           number = static_cast<int>(

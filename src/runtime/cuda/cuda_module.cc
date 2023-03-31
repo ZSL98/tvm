@@ -192,15 +192,15 @@ class CUDAWrappedFunc {
     }
     CUcontext context = static_cast<CUcontext>(CUDAThreadEntry::ThreadLocal()->context);
     cuCtxSetCurrent(context);
-    cudaEvent_t start;
-    cudaEvent_t stop;
-    cudaEventCreate(&start);
-    cudaEventCreate(&stop);
+    // cudaEvent_t start;
+    // cudaEvent_t stop;
+    // cudaEventCreate(&start);
+    // cudaEventCreate(&stop);
     // CUexecAffinityParam affinity;
     // cuCtxGetExecAffinity(&affinity, CU_EXEC_AFFINITY_TYPE_SM_COUNT);
     // std::cout << "Context affinity: " << affinity.param.smCount.val << std::endl;
     CUstream strm = static_cast<CUstream>(CUDAThreadEntry::ThreadLocal()->stream);
-    cudaEventRecord(start, strm);
+    // cudaEventRecord(start, strm);
     // std::cout << "strm: " << CUDAThreadEntry::ThreadLocal()->stream << std::endl;
     // CUcontext ctx;
     // cuCtxGetCurrent(&ctx);
@@ -208,13 +208,13 @@ class CUDAWrappedFunc {
     CUresult result = cuLaunchKernel(fcache_[device_id], wl.grid_dim(0), wl.grid_dim(1),
                                      wl.grid_dim(2), wl.block_dim(0), wl.block_dim(1),
                                      wl.block_dim(2), wl.dyn_shmem_size, strm, void_args, nullptr);
-    cudaEventRecord(stop, strm);
-    cudaEventSynchronize(stop);
-    float milliseconds = 0;
-    cudaEventElapsedTime(&milliseconds, start, stop);
-    printf("device_id: %d, time: %f\n", device_id, milliseconds);
-    cudaEventDestroy(start);
-    cudaEventDestroy(stop);
+    // cudaEventRecord(stop, strm);
+    // cudaEventSynchronize(stop);
+    // float milliseconds = 0;
+    // cudaEventElapsedTime(&milliseconds, start, stop);
+    // printf("device_id: %d, time: %f\n", device_id, milliseconds);
+    // cudaEventDestroy(start);
+    // cudaEventDestroy(stop);
     // std::cout << "Successfully launched 01" << std::endl;
     if (result != CUDA_SUCCESS && result != CUDA_ERROR_DEINITIALIZED) {
       const char* msg;
