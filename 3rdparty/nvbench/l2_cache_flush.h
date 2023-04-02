@@ -70,6 +70,7 @@ class L2Flush {
   }
 
   void resident_kernel(CUcontext context, cudaStream_t stream) {
+    cudaSetDevice(0);
     cuCtxSetCurrent(context);
 
     size_t size_in_byte = (1lu << 30) * 4; //(4GB)
@@ -107,18 +108,36 @@ class L2Flush {
     cuModuleLoad(&module, module_file);
     cuModuleGetFunction(&func, module, kernel_name);
 
+    // cudaDeviceSynchronize();
     void *param[] = { (void*)&ws, (void*)&rs, (void*)&workernum_dev };
+    // cudaEvent_t start;
+    // cudaEvent_t stop;
+    // cudaEventCreate(&start);
+    // cudaEventCreate(&stop);
     // CUcontext ctx;
     // cuCtxGetCurrent(&ctx);
     // std::cout << "current ctx: " << ctx << std::endl;
+    // cudaEventRecord(start, strm);
     cuLaunchKernel(func, 2*108, 1, 1, BLOCK, 1, 1, 0, strm, param, NULL);
+    // std::cout << "resident kernel finished" << std::endl;
+    // cudaEventRecord(stop, strm);
+    // cudaEventSynchronize(stop);
+    // float milliseconds = 0;
+    // cudaEventElapsedTime(&milliseconds, start, stop);
+    // printf("resident kernel time: %f\n", milliseconds);
+    // cudaEventDestroy(start);
+    // cudaEventDestroy(stop);
     // cudaStreamSynchronize(strm);
     // std::cout << "Resident kernel worker num: " << *worker_num << std::endl;
     cudaFreeAsync(ws, strm);
     cudaFreeAsync(rs, strm);
+    // cudaMemcpy(workernum_host, workernum_dev, sizeof(int), cudaMemcpyDeviceToHost);
+    // std::cout << "workernum: " << *workernum_host << std::endl;
     cudaFreeAsync(workernum_dev, strm);
     cudaFreeAsync(l2_flush, strm);
+    // std::cout << "resident kernel finished" << std::endl;
     // cuModuleUnload(module);
+    // cuStreamDestroy(strm);
   }
 
   static L2Flush* ThreadLocal();

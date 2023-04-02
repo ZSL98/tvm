@@ -59,8 +59,9 @@ class CUDAModuleNode : public runtime::ModuleNode {
   ~CUDAModuleNode() {
     for (size_t i = 0; i < module_.size(); ++i) {
       if (module_[i] != nullptr) {
+        // std::cout << "cuda module destruct" << std::endl;
         CUDA_CALL(cudaSetDevice(static_cast<int>(i)));
-        CUDA_DRIVER_CALL(cuModuleUnload(module_[i]));
+        // CUDA_DRIVER_CALL(cuModuleUnload(module_[i]));
       }
     }
   }
@@ -191,31 +192,70 @@ class CUDAWrappedFunc {
       }
     }
     CUcontext context = static_cast<CUcontext>(CUDAThreadEntry::ThreadLocal()->context);
+    // std::cout << "set context" << std::endl;
     cuCtxSetCurrent(context);
+
     // cudaEvent_t start;
     // cudaEvent_t stop;
     // cudaEventCreate(&start);
     // cudaEventCreate(&stop);
-    // CUexecAffinityParam affinity;
-    // cuCtxGetExecAffinity(&affinity, CU_EXEC_AFFINITY_TYPE_SM_COUNT);
-    // std::cout << "Context affinity: " << affinity.param.smCount.val << std::endl;
+
+    // size_t size_in_byte = (1lu << 30) * 4; //(4GB)
+    // char *ws;
+    // cudaMalloc(&ws, size_in_byte);
+    // cudaMemset(ws, 0, size_in_byte);
+
+    // char *rs;
+    // cudaMalloc(&rs, size_in_byte);
+    // cudaMemset(rs, 0, size_in_byte);
+
+    // int* workernum_host = new int;
+    // int* workernum_dev;
+    // *workernum_host = 0;
+    // cudaMalloc(&workernum_dev, sizeof(int));
+    // cudaMemcpy(workernum_dev, workernum_host, sizeof(int), cudaMemcpyHostToDevice);
+
+    // const int L2_FLUSH_SIZE = (1 << 20) * 128;
+    // int *l2_flush;
+    // cudaMalloc(&l2_flush, L2_FLUSH_SIZE);
+    // cudaMemset(l2_flush, 0, L2_FLUSH_SIZE);
+
+    // cudaStream_t strm_resident;
+    // CUDA_CALL(cudaStreamCreate(&strm_resident));
+    // CUmodule module;
+    // CUfunction func;
+    // char *module_file = (char*) "/root/compsche/evaluator/interference_evaluate/kernel_test/resident_kernels/resident_kernel.cubin";
+    // char *kernel_name = (char*) "resident_kernel_1_T_PTB";
+    // cudaSetDevice(0);
+    // cuModuleLoad(&module, module_file);
+    // cuModuleGetFunction(&func, module, kernel_name);
+    // void *param[] = { (void*)&ws, (void*)&rs, (void*)&workernum_dev };
+    // cuLaunchKernel(func, 216, 1, 1, 1024, 1, 1, 0, strm_resident, param, NULL);
+
     CUstream strm = static_cast<CUstream>(CUDAThreadEntry::ThreadLocal()->stream);
     // cudaEventRecord(start, strm);
-    // std::cout << "strm: " << CUDAThreadEntry::ThreadLocal()->stream << std::endl;
-    // CUcontext ctx;
-    // cuCtxGetCurrent(&ctx);
-    // std::cout << "Current Ctx: " << ctx << std::endl;
     CUresult result = cuLaunchKernel(fcache_[device_id], wl.grid_dim(0), wl.grid_dim(1),
                                      wl.grid_dim(2), wl.block_dim(0), wl.block_dim(1),
                                      wl.block_dim(2), wl.dyn_shmem_size, strm, void_args, nullptr);
     // cudaEventRecord(stop, strm);
     // cudaEventSynchronize(stop);
+    // // std::cout << "cudaEventSynchronize" << std::endl;
     // float milliseconds = 0;
     // cudaEventElapsedTime(&milliseconds, start, stop);
-    // printf("device_id: %d, time: %f\n", device_id, milliseconds);
+    // // std::cout << "cudaEventElapsedTime" << std::endl;
+    // std::cout << milliseconds << std::endl;
+    // // printf("time: %f\n", milliseconds);
     // cudaEventDestroy(start);
     // cudaEventDestroy(stop);
-    // std::cout << "Successfully launched 01" << std::endl;
+    // cudaDeviceSynchronize();
+
+    // cudaFreeAsync(ws, strm_resident);
+    // cudaFreeAsync(rs, strm_resident);
+    // cudaFreeAsync(workernum_dev, strm_resident);
+    // cudaFreeAsync(l2_flush, strm_resident);
+    // cuStreamDestroy(strm_resident);
+    // cuModuleUnload(module);
+
     if (result != CUDA_SUCCESS && result != CUDA_ERROR_DEINITIALIZED) {
       const char* msg;
       cuGetErrorName(result, &msg);

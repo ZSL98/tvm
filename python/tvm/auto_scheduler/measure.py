@@ -923,6 +923,7 @@ def _timed_eval_func(
 
     if error_no == 0:
         try:
+            context = dev.create_raw_context()
             random_fill = tvm.get_global_func("tvm.contrib.random.random_fill", True)
             assert random_fill, "Please make sure USE_RANDOM is ON in the config.cmake"
             assert len(args) == len(build_res.args)
@@ -940,6 +941,7 @@ def _timed_eval_func(
                     loc_args.append(ndarray.array(args[idx], dev))
             dev.sync()
             costs = time_f(*loc_args).results
+            dev.free_raw_context(context)
         # pylint: disable=broad-except
         except Exception:
             costs = (MAX_FLOAT,)

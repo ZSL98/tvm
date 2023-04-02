@@ -877,22 +877,19 @@ PackedFunc WrapTimeEvaluator(PackedFunc pf, Device dev, int number, int repeat, 
     std::ostringstream os;
     // skip first time call, to activate lazy compilation components.
     // DeviceAPI::Get(dev)->SetStream(dev, DeviceAPI::Get(dev)->CreateStream(dev));
-    DeviceAPI::Get(dev)->CreateContext(dev, 0, 0);
-    pf.CallPacked(args, &temp);
-    // std::cout << "Successfully launched" << std::endl;
-
+    // auto context = DeviceAPI::Get(dev)->CreateContext(dev, 0, 0);
+    // f_preproc.CallPacked(args, &temp);
+    for (int j = 0; j < 20; ++j) {
+      pf.CallPacked(args, &temp);
+    }
     for (int i = 0; i < repeat; ++i) {
       if (f_preproc != nullptr) {
         f_preproc.CallPacked(args, &temp);
         // std::cout << "Launch resident kernel" << std::endl;
       }
-      // for (int j = 0; j < 10; ++j) {
-      //   pf.CallPacked(args, &temp);
-      // }
       double duration_ms = 0.0;
       int absolute_zero_times = 0;
       do {
-        // std::cout << "..." << std::endl;
         if (duration_ms > 0.0) {
           const double golden_ratio = 1.618;
           number = static_cast<int>(
@@ -902,7 +899,6 @@ PackedFunc WrapTimeEvaluator(PackedFunc pf, Device dev, int number, int repeat, 
         // start timing
         Timer t = Timer::Start(dev);
         for (int j = 0; j < number; ++j) {
-          // f_postproc.CallPacked(args, &temp);
           pf.CallPacked(args, &temp);
         }
         t->Stop();
@@ -919,6 +915,8 @@ PackedFunc WrapTimeEvaluator(PackedFunc pf, Device dev, int number, int repeat, 
         std::this_thread::sleep_for(std::chrono::milliseconds(cooldown_interval_ms));
       }
     }
+
+    // DeviceAPI::Get(dev)->FreeContext(dev, context);
 
     std::string blob = os.str();
     TVMByteArray arr;

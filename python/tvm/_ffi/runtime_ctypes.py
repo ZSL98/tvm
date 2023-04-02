@@ -476,7 +476,7 @@ class Device(ctypes.Structure):
     def create_raw_context(self):
         context = ctypes.c_void_p()
         # print("create_raw_context in runtime_ctypes.py")
-        check_call(_LIB.TVMContextCreate(self.device_type, self.device_id, ctypes.byref(context)))
+        check_call(_LIB.TVMContextCreate(self.device_type, self.device_id, ctypes.byref(context), 0, 0))
         return context
     
     def set_raw_context(self, context):
